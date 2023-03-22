@@ -1,9 +1,9 @@
 #include "item.h"
 
-#include <clocale>
-#include <cctype>
 #include <algorithm>
 #include <array>
+#include <cctype>
+#include <clocale>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -11,11 +11,13 @@
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
 #include <tuple>
 #include <unordered_set>
+#include <utility>
 
 #include "ammo.h"
 #include "ascii_art.h"
@@ -23,6 +25,7 @@
 #include "bionics.h"
 #include "bodygraph.h"
 #include "bodypart.h"
+#include "calendar.h"
 #include "cata_assert.h"
 #include "cata_utility.h"
 #include "catacharset.h"
@@ -74,8 +77,8 @@
 #include "mod_manager.h"
 #include "monster.h"
 #include "mtype.h"
+#include "mutation.h"
 #include "npc.h"
-#include "optional.h"
 #include "options.h"
 #include "output.h"
 #include "overmap.h"
@@ -105,6 +108,7 @@
 #include "value_ptr.h"
 #include "vehicle.h"
 #include "vitamin.h"
+#include "veh_type.h"
 #include "vpart_position.h"
 #include "weather.h"
 #include "weather_gen.h"
@@ -128,6 +132,9 @@ static const efftype_id effect_shakes( "shakes" );
 static const efftype_id effect_sleep( "sleep" );
 static const efftype_id effect_weed_high( "weed_high" );
 
+const static fault_id fault_gun_damaged( "fault_gun_damaged" );
+const static fault_id fault_gun_unaccurized( "fault_gun_unaccurized" );
+
 static const furn_str_id furn_f_metal_smoking_rack_active( "f_metal_smoking_rack_active" );
 static const furn_str_id furn_f_smoking_rack_active( "f_smoking_rack_active" );
 static const furn_str_id furn_f_water_mill_active( "f_water_mill_active" );
@@ -143,7 +150,6 @@ static const item_category_id item_category_spare_parts( "spare_parts" );
 static const item_category_id item_category_tools( "tools" );
 static const item_category_id item_category_weapons( "weapons" );
 
-
 static const itype_id itype_barrel_small( "barrel_small" );
 static const itype_id itype_battery( "battery" );
 static const itype_id itype_blood( "blood" );
@@ -156,8 +162,10 @@ static const itype_id itype_cigar_lit( "cigar_lit" );
 static const itype_id itype_disassembly( "disassembly" );
 static const itype_id itype_hand_crossbow( "hand_crossbow" );
 static const itype_id itype_joint_roach( "joint_roach" );
+static const itype_id itype_null( "null" );
 static const itype_id itype_rad_badge( "rad_badge" );
 static const itype_id itype_rm13_armor( "rm13_armor" );
+static const itype_id itype_stock_none( "stock_none" );
 static const itype_id itype_tuned_mechanism( "tuned_mechanism" );
 static const itype_id itype_water( "water" );
 static const itype_id itype_water_clean( "water_clean" );
@@ -187,7 +195,6 @@ static const quality_id qual_LIFT( "LIFT" );
 static const skill_id skill_cooking( "cooking" );
 static const skill_id skill_melee( "melee" );
 static const skill_id skill_survival( "survival" );
-static const skill_id skill_unarmed( "unarmed" );
 static const skill_id skill_weapon( "weapon" );
 
 static const species_id species_ROBOT( "ROBOT" );
@@ -208,6 +215,8 @@ static const std::string flag_NO_DISPLAY( "NO_DISPLAY" );
 static const std::string flag_BLACKPOWDER_FOULING_DAMAGE( "BLACKPOWDER_FOULING_DAMAGE" );
 static const std::string flag_SILENT( "SILENT" );
 
+// item pricing
+static const int PRICE_FILTHY_MALUS = 100;  // cents
 
 class npc_class;
 
@@ -233,23 +242,23 @@ item &null_item_reference()
 
 namespace item_internal
 {
-bool goes_bad_temp_cache = false;
-const item *goes_bad_temp_cache_for = nullptr;
-inline bool goes_bad_cache_fetch()
+static bool goes_bad_temp_cache = false;
+static const item *goes_bad_temp_cache_for = nullptr;
+static bool goes_bad_cache_fetch()
 {
     return goes_bad_temp_cache;
 }
-inline void goes_bad_cache_set( const item *i )
+static void goes_bad_cache_set( const item *i )
 {
     goes_bad_temp_cache = i->goes_bad();
     goes_bad_temp_cache_for = i;
 }
-inline void goes_bad_cache_unset()
+static void goes_bad_cache_unset()
 {
     goes_bad_temp_cache = false;
     goes_bad_temp_cache_for = nullptr;
 }
-inline bool goes_bad_cache_is_for( const item *i )
+static bool goes_bad_cache_is_for( const item *i )
 {
     return goes_bad_temp_cache_for == i;
 }
@@ -272,13 +281,21 @@ item::item() : bday( calendar::start_of_cataclysm )
     charges = 0;
     contents = item_contents( type->pockets );
     select_itype_variant();
+    on_damage_changed();
 }
 
 item::item( const itype *type, time_point turn, int qty ) : type( type ), bday( turn )
 {
-    corpse = has_flag( flag_CORPSE ) ? &mtype_id::NULL_ID().obj() : nullptr;
     contents = item_contents( type->pockets );
     item_counter = type->countdown_interval;
+    item_vars = type->item_variables;
+
+    if( has_flag( flag_CORPSE ) ) {
+        corpse = &type->source_monster.obj();
+        if( !type->source_monster.is_null() && !type->source_monster->zombify_into.is_empty() ) {
+            set_var( "zombie_form", type->source_monster->zombify_into.c_str() );
+        }
+    }
 
     if( qty >= 0 ) {
         charges = qty;
@@ -301,7 +318,7 @@ item::item( const itype *type, time_point turn, int qty ) : type( type ), bday( 
         }
     } else {
         auto const mag_filter = []( item_pocket const & pck ) {
-            return pck.is_type( item_pocket::pocket_type::MAGAZINE ) or
+            return pck.is_type( item_pocket::pocket_type::MAGAZINE ) ||
                    pck.is_type( item_pocket::pocket_type::MAGAZINE_WELL );
         };
         for( item_pocket *pocket : contents.get_pockets( mag_filter ) ) {
@@ -316,6 +333,7 @@ item::item( const itype *type, time_point turn, int qty ) : type( type ), bday( 
     }
 
     select_itype_variant();
+    on_damage_changed();
     if( type->gun ) {
         for( const itype_id &mod : type->gun->built_in_mods ) {
             item it( mod, turn, qty );
@@ -382,8 +400,12 @@ safe_reference<item> item::get_safe_reference()
 static const item *get_most_rotten_component( const item &craft )
 {
     const item *most_rotten = nullptr;
-    for( const item &it : craft.components ) {
-        if( it.goes_bad() ) {
+    for( const item_components::type_vector_pair &tvp : craft.components ) {
+        if( !tvp.second.front().goes_bad() ) {
+            // they're all the same type, so this should be the same for all
+            continue;
+        }
+        for( const item &it : tvp.second ) {
             if( !most_rotten || it.get_relative_rot() > most_rotten->get_relative_rot() ) {
                 most_rotten = &it;
             }
@@ -396,8 +418,12 @@ static time_duration get_shortest_lifespan_from_components( const item &craft )
 {
     const item *shortest_lifespan_component = nullptr;
     time_duration shortest_lifespan = 0_turns;
-    for( const item &it : craft.components ) {
-        if( it.goes_bad() ) {
+    for( const item_components::type_vector_pair &tvp : craft.components ) {
+        if( !tvp.second.front().goes_bad() ) {
+            // they're all the same type, so this should be the same for all
+            continue;
+        }
+        for( const item &it : tvp.second ) {
             time_duration lifespan = it.get_shelf_life() - it.get_rot();
             if( !shortest_lifespan_component || ( lifespan < shortest_lifespan ) ) {
                 shortest_lifespan_component = &it;
@@ -411,9 +437,15 @@ static time_duration get_shortest_lifespan_from_components( const item &craft )
 
 static bool shelf_life_less_than_each_component( const item &craft )
 {
-    for( const item &it : craft.components ) {
-        if( it.goes_bad() && it.is_comestible() && it.get_shelf_life() < craft.get_shelf_life() ) {
-            return false;
+    for( const item_components::type_vector_pair &tvp : craft.components ) {
+        if( !tvp.second.front().goes_bad() || !tvp.second.front().is_comestible() ) {
+            // they're all the same type, so this should be the same for all
+            continue;
+        }
+        for( const item &it : tvp.second ) {
+            if( it.get_shelf_life() < craft.get_shelf_life() ) {
+                return false;
+            }
         }
     }
     return true;
@@ -445,15 +477,15 @@ static void inherit_rot_from_components( item &it )
     }
 }
 
-item::item( const recipe *rec, int qty, std::list<item> items, std::vector<item_comp> selections )
+item::item( const recipe *rec, int qty, item_components items, std::vector<item_comp> selections )
     : item( "craft", calendar::turn )
 {
     craft_data_ = cata::make_value<craft_data>();
     craft_data_->making = rec;
     craft_data_->disassembly = false;
     craft_data_->batch_size = qty;
-    components = items;
-    craft_data_->comps_used = selections;
+    components = std::move( items );
+    craft_data_->comps_used = std::move( selections );
 
     if( has_temperature() ) {
         active = true;
@@ -463,15 +495,17 @@ item::item( const recipe *rec, int qty, std::list<item> items, std::vector<item_
         }
     }
 
-    for( item &component : components ) {
-        for( const flag_id &f : component.get_flags() ) {
-            if( f->craft_inherit() ) {
-                set_flag( f );
+    for( item_components::type_vector_pair &tvp : components ) {
+        for( item &component : tvp.second ) {
+            for( const flag_id &f : component.get_flags() ) {
+                if( f->craft_inherit() ) {
+                    set_flag( f );
+                }
             }
-        }
-        for( const flag_id &f : component.type->get_flags() ) {
-            if( f->craft_inherit() ) {
-                set_flag( f );
+            for( const flag_id &f : component.type->get_flags() ) {
+                if( f->craft_inherit() ) {
+                    set_flag( f );
+                }
             }
         }
     }
@@ -484,7 +518,8 @@ item::item( const recipe *rec, int qty, item &component )
     craft_data_->making = rec;
     craft_data_->disassembly = true;
     craft_data_->batch_size = qty;
-    std::list<item>items( { component } );
+    item_components items;
+    items.add( component );
     components = items;
 
     if( has_temperature() ) {
@@ -495,15 +530,17 @@ item::item( const recipe *rec, int qty, item &component )
         }
     }
 
-    for( item &comp : components ) {
-        for( const flag_id &f : comp.get_flags() ) {
-            if( f->craft_inherit() ) {
-                set_flag( f );
+    for( item_components::type_vector_pair &tvp : components ) {
+        for( item &comp : tvp.second ) {
+            for( const flag_id &f : comp.get_flags() ) {
+                if( f->craft_inherit() ) {
+                    set_flag( f );
+                }
             }
-        }
-        for( const flag_id &f : comp.type->get_flags() ) {
-            if( f->craft_inherit() ) {
-                set_flag( f );
+            for( const flag_id &f : comp.type->get_flags() ) {
+                if( f->craft_inherit() ) {
+                    set_flag( f );
+                }
             }
         }
     }
@@ -602,7 +639,7 @@ bool item::activate_thrown( const tripoint &pos )
     return type->invoke( get_avatar(), *this, pos ).value_or( 0 );
 }
 
-units::energy item::set_energy( const units::energy &qty )
+units::energy item::mod_energy( const units::energy &qty )
 {
     if( !is_vehicle_battery() ) {
         debugmsg( "Tried to set energy of non-battery item" );
@@ -774,8 +811,8 @@ int item::degradation() const
 void item::rand_degradation()
 {
     degradation_ = damage() <= 0 ? 0 : rng( 0, damage() );
-    degradation_ = degrade_increments() > 0 ? degradation_ * ( 50.f / static_cast<float>
-                   ( degrade_increments() ) ) : 0;
+    degradation_ = type->degrade_increments() > 0 ? degradation_ * ( 50.f / static_cast<float>
+                   ( type->degrade_increments() ) ) : 0;
 }
 
 int item::damage_level( int dmg ) const
@@ -792,6 +829,15 @@ int item::damage_level( int dmg ) const
     }
 }
 
+float item::damage_scaling( bool to_self ) const
+{
+    float scale = damage_level() * .125f;
+    // caps the scale if this is a hit to the player vs the item itself
+    scale = 1.0f - scale;
+    // reinforce only effects damage to the item proper otherwise max scaling is 100f
+    return to_self ? scale : std::min( scale, 1.0f );
+}
+
 int item::damage_floor( bool allow_negative ) const
 {
     return std::max( min_damage() + degradation(), allow_negative ? min_damage() : 0 );
@@ -801,6 +847,7 @@ item &item::set_damage( int qty )
 {
     damage_ = std::max( std::min( qty, max_damage() ), min_damage() );
     degradation_ = std::max( std::min( damage_ - min_damage(), degradation_ ), 0 );
+    on_damage_changed();
     return *this;
 }
 
@@ -828,11 +875,6 @@ bool item::is_null() const
     return ( type == nullptr || type == nullitem() || typeId().is_null() );
 }
 
-bool item::is_unarmed_weapon() const
-{
-    return is_null() || has_flag( flag_UNARMED_WEAPON );
-}
-
 bool item::is_frozen_liquid() const
 {
     return made_of( phase_id::SOLID ) && made_of_from_type( phase_id::LIQUID );
@@ -847,7 +889,9 @@ bool item::covers( const sub_bodypart_id &bp ) const
     }
 
     bool has_sub_data = false;
-    // if the item has no sub location info then it should return that it does cover it
+
+    // If the item has no sub location info and covers the part's parent,
+    // then assume that the item covers that sub body part.
     for( const armor_portion_data &data : armor->sub_data ) {
         if( !data.sub_coverage.empty() ) {
             has_sub_data = true;
@@ -855,7 +899,7 @@ bool item::covers( const sub_bodypart_id &bp ) const
     }
 
     if( !has_sub_data ) {
-        return true;
+        return covers( bp->parent );
     }
 
     bool does_cover = false;
@@ -901,18 +945,18 @@ bool item::covers( const bodypart_id &bp ) const
     return does_cover || subpart_cover;
 }
 
-cata::optional<side> item::covers_overlaps( const item &rhs ) const
+std::optional<side> item::covers_overlaps( const item &rhs ) const
 {
     if( get_layer() != rhs.get_layer() ) {
-        return cata::nullopt;
+        return std::nullopt;
     }
     const islot_armor *armor = find_armor_data();
     if( armor == nullptr ) {
-        return cata::nullopt;
+        return std::nullopt;
     }
     const islot_armor *rhs_armor = rhs.find_armor_data();
     if( rhs_armor == nullptr ) {
-        return cata::nullopt;
+        return std::nullopt;
     }
     body_part_set this_covers;
     for( const armor_portion_data &data : armor->data ) {
@@ -929,7 +973,7 @@ cata::optional<side> item::covers_overlaps( const item &rhs ) const
     if( this_covers.intersect_set( rhs_covers ).any() ) {
         return rhs.get_side();
     } else {
-        return cata::nullopt;
+        return std::nullopt;
     }
 }
 
@@ -989,7 +1033,7 @@ const std::array<bodypart_str_id, 4> &right_side_parts()
 } // namespace
 
 void item::iterate_covered_sub_body_parts_internal( const side s,
-        std::function<void( const sub_bodypart_str_id & )> cb ) const
+        const std::function<void( const sub_bodypart_str_id & )> &cb ) const
 {
     const islot_armor *armor = find_armor_data();
     if( armor == nullptr ) {
@@ -1014,7 +1058,7 @@ void item::iterate_covered_sub_body_parts_internal( const side s,
 }
 
 void item::iterate_covered_body_parts_internal( const side s,
-        std::function<void( const bodypart_str_id & )> cb ) const
+        const std::function<void( const bodypart_str_id & )> &cb ) const
 {
 
     const islot_armor *armor = find_armor_data();
@@ -1112,7 +1156,7 @@ bool item::is_worn_by_player() const
 
 item item::in_its_container( int qty ) const
 {
-    return in_container( type->default_container.value_or( "null" ), qty,
+    return in_container( type->default_container.value_or( itype_null ), qty,
                          type->default_container_sealed );
 }
 
@@ -1149,7 +1193,7 @@ item item::in_container( const itype_id &cont, const int qty, const bool sealed 
 
 void item::update_modified_pockets()
 {
-    cata::optional<const pocket_data *> mag_or_mag_well;
+    std::optional<const pocket_data *> mag_or_mag_well;
     std::vector<const pocket_data *> container_pockets;
 
     for( const pocket_data &pocket : type->pockets ) {
@@ -1250,7 +1294,7 @@ bool item::combine( const item &rhs )
         if( rhs_energy > 0 && lhs_energy > 0 ) {
             const float combined_specific_energy = ( lhs_energy + rhs_energy ) / ( to_gram(
                     weight() ) + to_gram( rhs.weight() ) );
-            set_item_specific_energy( combined_specific_energy );
+            set_item_specific_energy( units::from_joule_per_gram( combined_specific_energy ) );
         }
 
     }
@@ -1277,10 +1321,11 @@ bool item::same_for_rle( const item &rhs ) const
           itype_variant().id != rhs.itype_variant().id ) ) {
         return false;
     }
-    return stacks_with( rhs, true, false );
+    return stacks_with( rhs, true, false, 0, 9 );
 }
 
-bool item::stacks_with( const item &rhs, bool check_components, bool combine_liquid ) const
+bool item::stacks_with( const item &rhs, bool check_components, bool combine_liquid, int depth,
+                        int maxdepth ) const
 {
     if( type != rhs.type ) {
         return false;
@@ -1323,7 +1368,7 @@ bool item::stacks_with( const item &rhs, bool check_components, bool combine_liq
 
         // we can combine liquids of same type and different temperatures
         if( !equal_ignoring_elements( rhs.get_flags(), get_flags(),
-        { flag_COLD, flag_FROZEN, flag_HOT, flag_NO_PARASITES } ) ) {
+        { flag_COLD, flag_FROZEN, flag_HOT, flag_NO_PARASITES, flag_FROM_FROZEN_LIQUID } ) ) {
             return false;
         }
     } else if( item_tags != rhs.item_tags ) {
@@ -1432,7 +1477,7 @@ bool item::stacks_with( const item &rhs, bool check_components, bool combine_liq
             return false;
         }
     }
-    return contents.stacks_with( rhs.contents );
+    return contents.stacks_with( rhs.contents, depth, maxdepth );
 }
 
 bool item::same_contents( const item &rhs ) const
@@ -1469,7 +1514,7 @@ int item::insert_cost( const item &it ) const
     return contents.insert_cost( it );
 }
 
-ret_val<bool> item::put_in( const item &payload, item_pocket::pocket_type pk_type,
+ret_val<void> item::put_in( const item &payload, item_pocket::pocket_type pk_type,
                             const bool unseal_pockets )
 {
     ret_val<item_pocket *> result = contents.insert_item( payload, pk_type );
@@ -1485,15 +1530,16 @@ ret_val<bool> item::put_in( const item &payload, item_pocket::pocket_type pk_typ
     }
     on_contents_changed();
     if( result.success() ) {
-        return ret_val<bool>::make_success( result.str() );
+        return ret_val<void>::make_success( result.str() );
     } else {
-        return ret_val<bool>::make_failure( result.str() );
+        return ret_val<void>::make_failure( result.str() );
     }
 }
 
 void item::force_insert_item( const item &it, item_pocket::pocket_type pk_type )
 {
     contents.force_insert_item( it, pk_type );
+    update_inherited_flags();
 }
 
 void item::set_var( const std::string &name, const int value )
@@ -1542,6 +1588,22 @@ double item::get_var( const std::string &name, const double default_value ) cons
         return default_value;
     }
     if( end != &val[0] + val.size() ) {
+        if( *end == ',' ) {
+            // likely legacy format with localized ',' for fraction separator instead of '.'
+            std::string converted_val = val;
+            converted_val[end - &val[0]] = '.';
+            errno = 0;
+            double result = strtod( &converted_val[0], &end );
+            if( errno != 0 ) {
+                debugmsg( "Error parsing floating point value from %s in item::get_var: %s",
+                          val, strerror( errno ) );
+                return default_value;
+            }
+            if( end != &converted_val[0] + converted_val.size() ) {
+                debugmsg( "Stray characters at end of floating point value %s in item::get_var", val );
+            }
+            return result;
+        }
         debugmsg( "Stray characters at end of floating point value %s in item::get_var", val );
     }
     return result;
@@ -1877,7 +1939,7 @@ static void insert_separation_line( std::vector<iteminfo> &info )
  * attacks
  * data painstakingly looked up at http://onlinestatbook.com/2/calculators/normal_dist.html
  */
-static const double hits_by_accuracy[41] = {
+static constexpr std::array<double, 41> hits_by_accuracy = {
     0,    1,   2,   3,   7, // -20 to -16
     13,   26,  47,   82,  139, // -15 to -11
     228,   359,  548,  808, 1151, // -10 to -6
@@ -2083,7 +2145,7 @@ void item::basic_info( std::vector<iteminfo> &info, const iteminfo_query *parts,
         insert_separation_line( info );
         const std::map<std::string, std::string>::const_iterator idescription =
             item_vars.find( "description" );
-        const cata::optional<translation> snippet = SNIPPET.get_snippet_by_id( snip_id );
+        const std::optional<translation> snippet = SNIPPET.get_snippet_by_id( snip_id );
         if( snippet.has_value() ) {
             // Just use the dynamic description
             info.emplace_back( "DESCRIPTION", snippet.value().translated() );
@@ -2091,7 +2153,7 @@ void item::basic_info( std::vector<iteminfo> &info, const iteminfo_query *parts,
             // only ever do the effect for a snippet the first time you see it
             if( !get_avatar().has_seen_snippet( snip_id ) ) {
                 // Have looked at the item so call the on examine EOC for the snippet
-                const cata::optional<talk_effect_t<dialogue>> examine_effect = SNIPPET.get_EOC_by_id( snip_id );
+                const std::optional<talk_effect_t<dialogue>> examine_effect = SNIPPET.get_EOC_by_id( snip_id );
                 if( examine_effect.has_value() ) {
                     // activate the effect
                     dialogue d( get_talker_for( get_avatar() ), nullptr );
@@ -2231,11 +2293,11 @@ void item::debug_info( std::vector<iteminfo> &info, const iteminfo_query *parts,
                 info.emplace_back( "BASE", _( "last temp: " ),
                                    "", iteminfo::lower_is_better,
                                    to_turn<int>( last_temp_check ) );
-                info.emplace_back( "BASE", _( "Temp: " ), "", iteminfo::lower_is_better,
-                                   temperature );
+                info.emplace_back( "BASE", _( "Temp: " ), "", iteminfo::lower_is_better | iteminfo::is_decimal,
+                                   units::to_kelvin( temperature ) );
                 info.emplace_back( "BASE", _( "Spec ener: " ), "",
-                                   iteminfo::lower_is_better,
-                                   specific_energy );
+                                   iteminfo::lower_is_better | iteminfo::is_decimal,
+                                   units::to_joule_per_gram( specific_energy ) );
                 info.emplace_back( "BASE", _( "Spec heat lq: " ), "",
                                    iteminfo::lower_is_better | iteminfo::is_decimal,
                                    get_specific_heat_liquid() );
@@ -2247,14 +2309,14 @@ void item::debug_info( std::vector<iteminfo> &info, const iteminfo_query *parts,
                                    get_latent_heat() );
                 info.emplace_back( "BASE", _( "Freeze point: " ), "",
                                    iteminfo::lower_is_better | iteminfo::is_decimal,
-                                   get_freeze_point() );
+                                   units::to_kelvin( get_freeze_point() ) );
             }
         }
     }
 }
 
 void item::med_info( const item *med_item, std::vector<iteminfo> &info, const iteminfo_query *parts,
-                     int batch, bool ) const
+                     int batch, bool debug ) const
 {
     const cata::value_ptr<islot_comestible> &med_com = med_item->get_comestible();
     if( med_com->quench != 0 && parts->test( iteminfo_parts::MED_QUENCH ) ) {
@@ -2272,7 +2334,7 @@ void item::med_info( const item *med_item, std::vector<iteminfo> &info, const it
     }
 
     if( med_com->stim != 0 && parts->test( iteminfo_parts::MED_STIMULATION ) ) {
-        std::string name = string_format( "%s <stat>%s</stat>", _( "Stimulation:" ),
+        std::string name = string_format( "%s<stat>%s</stat>", _( "Stimulation: " ),
                                           med_com->stim > 0 ? _( "Upper" ) : _( "Downer" ) );
         info.emplace_back( "MED", name );
     }
@@ -2290,6 +2352,8 @@ void item::med_info( const item *med_item, std::vector<iteminfo> &info, const it
     if( med_com->addict && parts->test( iteminfo_parts::DESCRIPTION_MED_ADDICTING ) ) {
         info.emplace_back( "DESCRIPTION", _( "* Consuming this item is <bad>addicting</bad>." ) );
     }
+
+    rot_info( med_item, info, parts, batch, debug );
 }
 
 void item::food_info( const item *food_item, std::vector<iteminfo> &info,
@@ -2380,12 +2444,16 @@ void item::food_info( const item *food_item, std::vector<iteminfo> &info,
             display_vitamins != is_vitamin || v.first->has_flag( flag_NO_DISPLAY ) ) {
             return std::string();
         }
-        const double multiplier = player_character.vitamin_rate( v.first ) / 1_days * 100;
         const int min_value = min_nutr.get_vitamin( v.first );
         const int max_value = v.second;
-        const int min_rda = std::lround( min_value * multiplier );
-        const int max_rda = std::lround( max_value * multiplier );
-        const std::string format = min_rda == max_rda ? "%s (%i%%)" : "%s (%i-%i%%)";
+        const int min_rda = player_character.vitamin_RDA( v.first, min_value );
+        const int max_rda = player_character.vitamin_RDA( v.first, max_value );
+        std::string format;
+        if( is_vitamin ) {
+            format = min_value == max_value ? "%s (%i%%)" : "%s (%i-%i%%)";
+            return string_format( format, v.first->name(), min_rda, max_rda );
+        }
+        format = min_value == max_value ? "%s (%i U)" : "%s (%i-%i U)";
         return string_format( format, v.first->name(), min_value, max_value );
     };
 
@@ -2454,10 +2522,18 @@ void item::food_info( const item *food_item, std::vector<iteminfo> &info,
                               "<neutral>hallucinogenic</neutral>." ) );
     }
 
+    rot_info( food_item, info, parts, batch, debug );
+}
+
+void item::rot_info( const item *const food_item, std::vector<iteminfo> &info,
+                     const iteminfo_query *const parts, const int /*batch*/, const bool /*debug*/ ) const
+{
+    Character &player_character = get_player_character();
+
     if( food_item->goes_bad() && parts->test( iteminfo_parts::FOOD_ROT ) ) {
         const std::string rot_time = to_string_clipped( food_item->get_shelf_life() );
         info.emplace_back( "DESCRIPTION",
-                           string_format( _( "* This food is <neutral>perishable</neutral>, "
+                           string_format( _( "* This item is <neutral>perishable</neutral>, "
                                              "and at room temperature has an estimated nominal "
                                              "shelf life of <info>%s</info>." ), rot_time ) );
 
@@ -2485,16 +2561,16 @@ void item::food_info( const item *food_item, std::vector<iteminfo> &info,
         if( food_item->rotten() ) {
             if( player_character.has_bionic( bio_digestion ) ) {
                 info.emplace_back( "DESCRIPTION",
-                                   _( "This food has started to <neutral>rot</neutral>, "
+                                   _( "This item has started to <neutral>rot</neutral>, "
                                       "but <info>your bionic digestion can tolerate "
                                       "it</info>." ) );
             } else if( player_character.has_flag( json_flag_IMMUNE_SPOIL ) ) {
                 info.emplace_back( "DESCRIPTION",
-                                   _( "This food has started to <neutral>rot</neutral>, "
+                                   _( "This item has started to <neutral>rot</neutral>, "
                                       "but <info>you can tolerate it</info>." ) );
             } else {
                 info.emplace_back( "DESCRIPTION",
-                                   _( "This food has started to <bad>rot</bad>. "
+                                   _( "This item has started to <bad>rot</bad>. "
                                       "<info>Eating</info> it would be a <bad>very bad "
                                       "idea</bad>." ) );
             }
@@ -2509,6 +2585,33 @@ void item::magazine_info( std::vector<iteminfo> &info, const iteminfo_query *par
         return;
     }
 
+    if( parts->test( iteminfo_parts::MAGAZINE_COMPATIBLE_GUNS ) &&
+        islot_magazine::compatible_guns.find( this->typeId() ) != islot_magazine::compatible_guns.end() ) {
+        const auto compare = []( const auto & lhs, const auto & rhs ) {
+            return localized_compare( lhs, rhs );
+        };
+        std::set<std::string, decltype( compare )> compatible_guns( compare );
+
+        for( const itype_id &gun_type_id : islot_magazine::compatible_guns[this->typeId()] ) {
+            const itype &gun_type = gun_type_id.obj();
+            if( get_option<bool>( "SHOW_GUN_VARIANTS" ) ) {
+                if( gun_type.variants.empty() ) {
+                    compatible_guns.insert( gun_type.nname( 1 ) );
+                }
+                for( const itype_variant_data &variant_type : gun_type.variants ) {
+                    compatible_guns.insert( variant_type.alt_name.translated() );
+                }
+            } else {
+                compatible_guns.insert( gun_type.nname( 1 ) );
+            }
+        }
+
+        if( !compatible_guns.empty() ) {
+            const std::string mag_names = enumerate_as_string( compatible_guns );
+            info.emplace_back( "MAGAZINE", _( "<bold>Compatible guns</bold>: " ) + mag_names );
+            insert_separation_line( info );
+        }
+    }
     if( parts->test( iteminfo_parts::MAGAZINE_CAPACITY ) ) {
         for( const ammotype &at : ammo_types() ) {
             const std::string fmt = string_format( n_gettext( "<num> round of %s",
@@ -2516,6 +2619,15 @@ void item::magazine_info( std::vector<iteminfo> &info, const iteminfo_query *par
                                                    at->name() );
             info.emplace_back( "MAGAZINE", _( "Capacity: " ), fmt, iteminfo::no_flags,
                                ammo_capacity( at ) );
+        }
+    }
+    if( parts->test( iteminfo_parts::MAGAZINE_COMPATABILITY ) ) {
+        for( const ammotype &at : ammo_types() ) {
+            std::string ammo_details = print_ammo( at );
+            if( !ammo_details.empty() ) {
+                info.emplace_back( "MAGAZINE", _( "Variants: " ), ammo_details, iteminfo::no_flags );
+            }
+
         }
     }
     if( parts->test( iteminfo_parts::MAGAZINE_RELOAD ) && type->magazine ) {
@@ -2879,6 +2991,10 @@ void item::gun_info( const item *mod, std::vector<iteminfo> &info, const iteminf
                                                        mod->ammo_capacity( at ) ), at->name() );
                 info.emplace_back( "GUN", _( "Capacity: " ), fmt, iteminfo::no_flags,
                                    mod->ammo_capacity( at ) );
+                std::string ammo_details = print_ammo( at );
+                if( !ammo_details.empty() && !magazine_integral() ) {
+                    info.emplace_back( "GUN", _( "Variants: " ), ammo_details, iteminfo::no_flags );
+                }
             }
         }
     } else if( parts->test( iteminfo_parts::GUN_TYPE ) ) {
@@ -2896,17 +3012,17 @@ void item::gun_info( const item *mod, std::vector<iteminfo> &info, const iteminf
                            mod->ammo_data()->nname( mod->ammo_remaining() ) ) );
     }
 
-    if( mod->ammo_required() > 1  && parts->test( iteminfo_parts::AMMO_TO_FIRE ) ) {
+    if( mod->ammo_required() > 1 && parts->test( iteminfo_parts::AMMO_TO_FIRE ) ) {
         info.emplace_back( "AMMO",  _( "Ammunition consumed per shot: " ), "",
                            iteminfo::lower_is_better, mod->ammo_required() );
     }
 
-    if( mod->get_gun_ups_drain() && parts->test( iteminfo_parts::AMMO_UPSCOST ) ) {
+    if( mod->get_gun_ups_drain() > 0_kJ && parts->test( iteminfo_parts::AMMO_UPSCOST ) ) {
         info.emplace_back( "AMMO",
                            string_format( n_gettext( "Uses <stat>%i</stat> charge of UPS per shot",
-                                          "Uses <stat>%i</stat> charges of UPS per shot",
-                                          mod->get_gun_ups_drain() ),
-                                          mod->get_gun_ups_drain() ) );
+                                          "Uses <stat>%i</stat> kJ of UPS per shot",
+                                          units::to_kilojoule( mod->get_gun_ups_drain() ) ),
+                                          units::to_kilojoule( mod->get_gun_ups_drain() ) ) );
     }
 
     if( parts->test( iteminfo_parts::GUN_AIMING_STATS ) ) {
@@ -2914,8 +3030,8 @@ void item::gun_info( const item *mod, std::vector<iteminfo> &info, const iteminf
         info.emplace_back( "GUN", _( "<bold>Base aim speed</bold>: " ), "<num>", iteminfo::no_flags,
                            player_character.aim_per_move( *mod, MAX_RECOIL ) );
         for( const aim_type &type : player_character.get_aim_types( *mod ) ) {
-            // Nameless aim levels don't get an entry.
-            if( type.name.empty() ) {
+            // Nameless and immediate aim levels don't get an entry.
+            if( type.name.empty() || type.threshold == static_cast<int>( MAX_RECOIL ) ) {
                 continue;
             }
             // For item comparison to work correctly each info object needs a
@@ -2964,7 +3080,7 @@ void item::gun_info( const item *mod, std::vector<iteminfo> &info, const iteminf
                 return info;
             } );
 
-            std::string display =  _( "<bold>Compatible magazines</bold>:" );
+            std::string display = _( "<bold>Compatible magazines</bold>:" );
             if( !compat_sorted.empty() ) {
                 display += _( "\n<bold>Types</bold>: " ) + mag_names;
             }
@@ -2979,33 +3095,34 @@ void item::gun_info( const item *mod, std::vector<iteminfo> &info, const iteminf
     if( !gun.valid_mod_locations.empty() && parts->test( iteminfo_parts::DESCRIPTION_GUN_MODS ) ) {
         insert_separation_line( info );
 
-        std::string mod_str = _( "<bold>Mods</bold>: " );
+        std::string mod_str = _( "<bold>Mods</bold>:" );
 
         std::map<gunmod_location, int> mod_locations = get_mod_locations();
 
         int iternum = 0;
+        mod_str += "\n";
         for( std::pair<const gunmod_location, int> &elem : mod_locations ) {
             if( iternum != 0 ) {
-                mod_str += "; ";
+                mod_str += "\n";
             }
             const int free_slots = elem.second - get_free_mod_locations( elem.first );
-            mod_str += string_format( "<bold>%d/%d</bold> %s", free_slots,  elem.second,
-                                      elem.first.name() );
-            bool first_mods = true;
+            mod_str += string_format( "<color_cyan># </color>%s:", elem.first.name() );
+
             for( const item *gmod : gunmods() ) {
                 if( gmod->type->gunmod->location == elem.first ) { // if mod for this location
-                    if( first_mods ) {
-                        mod_str += ": ";
-                        first_mods = false;
-                    } else {
-                        mod_str += ", ";
-                    }
-                    mod_str += string_format( "<stat>%s</stat>", gmod->tname() );
+                    mod_str +=
+                        string_format( "\n    <stat>[</stat><color_light_green>● </color><stat>%s]</stat>",
+                                       gmod->tname( 1, false ) );
                 }
+            }
+            for( int i = free_slots + 1 ; i <= elem.second ; i++ ) {
+                if( i == free_slots + 1 && i <= elem.second ) {
+                    mod_str += string_format( "\n   " );
+                }
+                mod_str += string_format( " <color_dark_gray>[-%s-]</color>", _( "empty" ) );
             }
             iternum++;
         }
-        mod_str += ".";
         info.emplace_back( "DESCRIPTION", mod_str );
     }
 
@@ -3140,11 +3257,11 @@ void item::gunmod_info( std::vector<iteminfo> &info, const iteminfo_query *parts
     insert_separation_line( info );
 
     if( parts->test( iteminfo_parts::GUNMOD_USEDON ) ) {
-        std::string used_on_str = _( "Used on: " ) +
-        enumerate_as_string( mod.usable.begin(), mod.usable.end(), []( const gun_type_type & used_on ) {
-            return string_format( "<info>%s</info>", used_on.name() );
-        } );
-        info.emplace_back( "GUNMOD", used_on_str );
+        std::set<std::string> used_on_translated; // uses set to prune duplicates
+        for( const gun_type_type &gtt : mod.usable ) {
+            used_on_translated.emplace( string_format( "<info>%s</info>", gtt.name() ) );
+        }
+        info.emplace_back( "GUNMOD", _( "Used on: " ) + enumerate_as_string( used_on_translated ) );
     }
 
     if( parts->test( iteminfo_parts::GUNMOD_LOCATION ) ) {
@@ -3502,10 +3619,10 @@ void item::armor_protection_info( std::vector<iteminfo> &info, const iteminfo_qu
                                _( "Protection when active" ) ) );
             info.emplace_back( bp_cat, space + _( "Acid: " ), "",
                                iteminfo::no_newline | iteminfo::is_decimal,
-                               acid_resist( sbp, false, get_base_env_resist_w_filter() ) );
+                               resist( damage_type::ACID, false, sbp, get_base_env_resist_w_filter() ) );
             info.emplace_back( bp_cat, space + _( "Fire: " ), "",
                                iteminfo::no_newline | iteminfo::is_decimal,
-                               fire_resist( sbp, false, get_base_env_resist_w_filter() ) );
+                               resist( damage_type::HEAT, false, sbp, get_base_env_resist_w_filter() ) );
             info.emplace_back( bp_cat, space + _( "Environmental: " ),
                                get_env_resist( get_base_env_resist_w_filter() ) );
         }
@@ -3572,15 +3689,15 @@ void item::pet_armor_protection_info( std::vector<iteminfo> &info,
 
         info.emplace_back( "ARMOR", _( "<bold>Protection</bold>:" ), "" );
         info.emplace_back( "ARMOR", space + _( "Bash: " ), "",
-                           iteminfo::is_decimal, bash_resist() );
+                           iteminfo::is_decimal, resist( damage_type::BASH ) );
         info.emplace_back( "ARMOR", space + _( "Cut: " ), "",
-                           iteminfo::is_decimal, cut_resist() );
+                           iteminfo::is_decimal, resist( damage_type::CUT ) );
         info.emplace_back( "ARMOR", space + _( "Ballistic: " ), "", iteminfo::is_decimal,
-                           bullet_resist() );
+                           resist( damage_type::BULLET ) );
         info.emplace_back( "ARMOR", space + _( "Acid: " ), "",
-                           iteminfo::is_decimal, acid_resist() );
+                           iteminfo::is_decimal, resist( damage_type::ACID ) );
         info.emplace_back( "ARMOR", space + _( "Fire: " ), "",
-                           iteminfo::is_decimal, fire_resist() );
+                           iteminfo::is_decimal, resist( damage_type::HEAT ) );
         info.emplace_back( "ARMOR", space + _( "Environmental: " ),
                            get_base_env_resist( *this ) );
 
@@ -3599,7 +3716,7 @@ struct armor_encumb_data {
     int encumb_max;
     int encumb_min;
 
-    bool operator==( const armor_encumb_data &a ) {
+    bool operator==( const armor_encumb_data &a ) const {
         return encumb == a.encumb &&
                encumb_min == a.encumb_min &&
                encumb_max == a.encumb_max;
@@ -3630,11 +3747,8 @@ void item::armor_info( std::vector<iteminfo> &info, const iteminfo_query *parts,
     const bool show_bodygraph = get_option<bool>( "ITEM_BODYGRAPH" ) &&
                                 parts->test( iteminfo_parts::ARMOR_BODYGRAPH );
 
-    if( show_bodygraph || parts->test( iteminfo_parts::ARMOR_BODYPARTS ) ) {
-        insert_separation_line( info );
-    }
-
     if( parts->test( iteminfo_parts::ARMOR_BODYPARTS ) ) {
+        insert_separation_line( info );
         std::vector<sub_bodypart_id> covered = get_covered_sub_body_parts();
         std::string coverage = _( "<bold>Covers</bold>:" );
 
@@ -3650,44 +3764,6 @@ void item::armor_info( std::vector<iteminfo> &info, const iteminfo_query *parts,
         }
 
         info.emplace_back( "ARMOR", coverage );
-    }
-
-    if( show_bodygraph ) {
-        auto bg_cb = [this]( const bodygraph_part * bgp, const std::string & sym ) {
-            if( !bgp ) {
-                return colorize( sym, bodygraph_full_body_iteminfo->fill_color );
-            }
-            std::set<sub_bodypart_id> grp { bgp->sub_bodyparts.begin(), bgp->sub_bodyparts.end() };
-            for( const bodypart_id &bid : bgp->bodyparts ) {
-                grp.insert( bid->sub_parts.begin(), bid->sub_parts.end() );
-            }
-            nc_color clr = c_dark_gray;
-            int cov_val = 0;
-            for( const sub_bodypart_id &sid : grp ) {
-                int tmp = get_coverage( sid );
-                cov_val = tmp > cov_val ? tmp : cov_val;
-            }
-            if( cov_val <= 5 ) {
-                clr = c_dark_gray;
-            } else if( cov_val <= 10 ) {
-                clr = c_light_gray;
-            } else if( cov_val <= 25 ) {
-                clr = c_light_red;
-            } else if( cov_val <= 60 ) {
-                clr = c_yellow;
-            } else if( cov_val <= 80 ) {
-                clr = c_green;
-            } else {
-                clr = c_light_green;
-            }
-            return colorize( sym, clr );
-        };
-        std::vector<std::string> bg_lines = get_bodygraph_lines( get_player_character(), bg_cb,
-                                            bodygraph_full_body_iteminfo );
-        for( const std::string &line : bg_lines ) {
-            info.emplace_back( "ARMOR", line );
-        }
-        insert_separation_line( info );
     }
 
     if( parts->test( iteminfo_parts::ARMOR_RIGIDITY ) && is_rigid() ) {
@@ -3803,9 +3879,6 @@ void item::armor_info( std::vector<iteminfo> &info, const iteminfo_query *parts,
             info.emplace_back( "ARMOR", space, "", iteminfo::no_newline | iteminfo::lower_is_better,
                                entry.first.encumb );
 
-
-
-
             // if it has a max value
             if( entry.first.encumb != entry.first.encumb_max ) {
                 std::string when_full_message = _( ", When full" ) + space;
@@ -3877,7 +3950,7 @@ void item::armor_info( std::vector<iteminfo> &info, const iteminfo_query *parts,
             item tmp = *this;
 
             //no need to clutter the ui with inactive versions when the armor is already active
-            if( !active ) {
+            if( !( active || ( type->tool && type->tool->power_draw > 0_W ) ) ) {
                 bool print_prot = true;
                 if( parts->test( iteminfo_parts::ARMOR_PROTECTION ) ) {
                     print_prot = !tmp.armor_full_protection_info( info, parts );
@@ -3939,6 +4012,46 @@ void item::armor_info( std::vector<iteminfo> &info, const iteminfo_query *parts,
                            iteminfo::no_newline | iteminfo::is_decimal,
                            convert_weight( weight_bonus ) );
     }
+
+    if( show_bodygraph ) {
+        insert_separation_line( info );
+
+        auto bg_cb = [this]( const bodygraph_part * bgp, const std::string & sym ) {
+            if( !bgp ) {
+                return colorize( sym, bodygraph_full_body_iteminfo->fill_color );
+            }
+            std::set<sub_bodypart_id> grp{ bgp->sub_bodyparts.begin(), bgp->sub_bodyparts.end() };
+            for( const bodypart_id &bid : bgp->bodyparts ) {
+                grp.insert( bid->sub_parts.begin(), bid->sub_parts.end() );
+            }
+            nc_color clr = c_dark_gray;
+            int cov_val = 0;
+            for( const sub_bodypart_id &sid : grp ) {
+                int tmp = get_coverage( sid );
+                cov_val = tmp > cov_val ? tmp : cov_val;
+            }
+            if( cov_val <= 5 ) {
+                clr = c_dark_gray;
+            } else if( cov_val <= 10 ) {
+                clr = c_light_gray;
+            } else if( cov_val <= 25 ) {
+                clr = c_light_red;
+            } else if( cov_val <= 60 ) {
+                clr = c_yellow;
+            } else if( cov_val <= 80 ) {
+                clr = c_green;
+            } else {
+                clr = c_light_green;
+            }
+            return colorize( sym, clr );
+        };
+        std::vector<std::string> bg_lines = get_bodygraph_lines( get_player_character(), bg_cb,
+                                            bodygraph_full_body_iteminfo );
+        for( const std::string &line : bg_lines ) {
+            info.emplace_back( "ARMOR", line );
+        }
+        insert_separation_line( info );
+    }
 }
 
 void item::animal_armor_info( std::vector<iteminfo> &info, const iteminfo_query *parts,
@@ -3959,13 +4072,6 @@ void item::armor_fit_info( std::vector<iteminfo> &info, const iteminfo_query *pa
 
     Character &player_character = get_player_character();
     const sizing sizing_level = get_sizing( player_character );
-
-    if( has_flag( flag_HELMET_COMPAT ) &&
-        parts->test( iteminfo_parts::DESCRIPTION_FLAGS_HELMETCOMPAT ) ) {
-        info.emplace_back( "DESCRIPTION",
-                           _( "* This item can be <info>worn with a "
-                              "helmet</info>." ) );
-    }
 
     if( parts->test( iteminfo_parts::DESCRIPTION_FLAGS_FITS ) ) {
         switch( sizing_level ) {
@@ -4189,16 +4295,16 @@ void item::book_info( std::vector<iteminfo> &info, const iteminfo_query *parts, 
                                   "A chapter of this book takes <num> <info>minute to "
                                   "read</info>.",
                                   "A chapter of this book takes <num> <info>minutes to "
-                                  "read</info>.", book.time );
+                                  "read</info>.", to_minutes<int>( book.time ) );
             if( type->use_methods.count( "MA_MANUAL" ) ) {
                 fmt = n_gettext(
                           "<info>A training session</info> with this book takes "
                           "<num> <info>minute</info>.",
                           "<info>A training session</info> with this book takes "
-                          "<num> <info>minutes</info>.", book.time );
+                          "<num> <info>minutes</info>.", to_minutes<int>( book.time ) );
             }
             info.emplace_back( "BOOK", "", fmt,
-                               iteminfo::lower_is_better, book.time );
+                               iteminfo::lower_is_better, to_minutes<int>( book.time ) );
         }
 
         if( book.chapters > 0 && parts->test( iteminfo_parts::BOOK_NUMUNREADCHAPTERS ) ) {
@@ -4353,7 +4459,7 @@ void item::tool_info( std::vector<iteminfo> &info, const iteminfo_query *parts, 
                     return info;
                 } );
 
-                std::string display =  _( "<bold>Compatible magazines</bold>:" );
+                std::string display = _( "<bold>Compatible magazines</bold>:" );
                 if( !compat_sorted.empty() ) {
                     display += _( "\n<bold>Types</bold>: " ) + mag_names;
                 }
@@ -4433,23 +4539,14 @@ void item::tool_info( std::vector<iteminfo> &info, const iteminfo_query *parts, 
     }
 
     // Display e-ink tablet copied recipes from SD cards
-    if( has_var( "EIPC_RECIPES" ) && !is_broken_on_active() ) {
+    const std::set<recipe_id> saved_recipes = get_saved_recipes();
+    if( !saved_recipes.empty() ) {
         std::vector<std::string> known_recipe_list;
         std::vector<std::string> learnable_recipe_list;
         std::vector<std::string> unlearnable_recipe_list;
 
-        const std::string recipes = get_var( "EIPC_RECIPES" );
-        // Capture the index one past the delimiter, i.e. start of target string.
-        size_t first_string_index = recipes.find_first_of( ',' ) + 1;
-        while( first_string_index != std::string::npos ) {
-            size_t next_string_index = recipes.find_first_of( ',', first_string_index );
-            if( next_string_index == std::string::npos ) {
-                break;
-            }
-            std::string new_recipe = recipes.substr( first_string_index,
-                                     next_string_index - first_string_index );
-
-            const recipe *r = &recipe_id( new_recipe ).obj();
+        for( const recipe_id &rid : saved_recipes ) {
+            const recipe *r = &rid.obj();
 
             const bool knows_it = player_character.knows_recipe( r );
             const bool can_learn = player_character.get_skill_level( r->skill_used ) >= r->difficulty;
@@ -4465,8 +4562,6 @@ void item::tool_info( std::vector<iteminfo> &info, const iteminfo_query *parts, 
             } else {
                 learnable_recipe_list.emplace_back( "<dark>" + name + "</dark>" );
             }
-
-            first_string_index = next_string_index + 1;
         }
 
         int total_recipes = known_recipe_list.size() + learnable_recipe_list.size() +
@@ -4530,9 +4625,7 @@ void item::tool_info( std::vector<iteminfo> &info, const iteminfo_query *parts, 
         std::vector<const item *> book_list = ebooks();
         int total_ebooks = book_list.size();
 
-        for( auto iter = book_list.begin(); iter != book_list.end(); ++iter ) {
-            const item *ebook = *iter;
-
+        for( const item *ebook : book_list ) {
             const islot_book &book = *ebook->type->book;
             for( const islot_book::recipe_with_description_t &elem : book.recipes ) {
                 const bool knows_it = player_character.knows_recipe( elem.recipe );
@@ -4628,6 +4721,22 @@ void item::tool_info( std::vector<iteminfo> &info, const iteminfo_query *parts, 
     }
 }
 
+void item::actions_info( std::vector<iteminfo> &info, const iteminfo_query *parts,
+                         int /*batch*/, bool /*debug*/ ) const
+{
+
+    const std::map<std::string, use_function> &use_methods = type->use_methods;
+    if( use_methods.empty() || !parts->test( iteminfo_parts::ACTIONS ) ) {
+        return;
+    }
+    insert_separation_line( info );
+    std::string actions = enumerate_as_string( use_methods.begin(),
+    use_methods.end(), []( const std::pair<std::string, use_function> &val ) {
+        return string_format( "<info>%s</info>", val.second.get_name() );
+    } );
+    info.emplace_back( "DESCRIPTION", string_format( _( "<bold>Actions</bold>: %s" ), actions ) );
+}
+
 void item::component_info( std::vector<iteminfo> &info, const iteminfo_query *parts, int /*batch*/,
                            bool /*debug*/ ) const
 {
@@ -4640,6 +4749,139 @@ void item::component_info( std::vector<iteminfo> &info, const iteminfo_query *pa
     } else {
         info.emplace_back( "DESCRIPTION", string_format( _( "Made from: %s" ),
                            components_to_string() ) );
+    }
+}
+
+static void enchantment_info_helper( const item &it,
+                                     enchantment::has type,
+                                     std::vector<std::string> &always,
+                                     std::vector<std::string> &active,
+                                     std::vector<std::string> &inactive )
+{
+    for( const enchantment &ench : it.get_defined_enchantments() ) {
+        // only check conditions matching the given type
+        if( ench.active_conditions.first == type ) {
+            // if a description is provided use that
+            if( !ench.description.empty() ) {
+                std::string info;
+                if( !ench.name.empty() ) {
+                    info = string_format( "<info>%s</info>: %s", ench.name.translated(),
+                                          ench.description.translated() );
+                } else {
+                    info = string_format( _( "<info>Description</info>: %s" ), ench.description.translated() );
+                }
+                switch( ench.active_conditions.second ) {
+                    case enchantment::condition::ALWAYS:
+                        always.push_back( info );
+                        break;
+                    case enchantment::condition::ACTIVE:
+                        active.push_back( info );
+                        break;
+                    case enchantment::condition::INACTIVE:
+                        inactive.push_back( info );
+                        break;
+                    case enchantment::condition::DIALOG_CONDITION:
+                    case enchantment::condition::NUM_CONDITION:
+                        // skip for dialog conditions
+                        break;
+                }
+            }
+        }
+    }
+    for( const enchant_cache &ench : it.get_proc_enchantments() ) {
+        // only check conditions matching the given type
+        if( ench.active_conditions.first == type ) {
+            // if a description is provided use that
+            if( !ench.description.empty() ) {
+                std::string info;
+                if( !ench.name.empty() ) {
+                    info = string_format( "<info>%s</info>: %s", ench.name.translated(),
+                                          ench.description.translated() );
+                } else {
+                    info = string_format( _( "<info>Description</info>: %s" ), ench.description.translated() );
+                }
+                switch( ench.active_conditions.second ) {
+                    case enchantment::condition::ALWAYS:
+                        always.push_back( info );
+                        break;
+                    case enchantment::condition::ACTIVE:
+                        active.push_back( info );
+                        break;
+                    case enchantment::condition::INACTIVE:
+                        inactive.push_back( info );
+                        break;
+                    case enchantment::condition::DIALOG_CONDITION:
+                    case enchantment::condition::NUM_CONDITION:
+                        // skip for dialog conditions
+                        break;
+                }
+            }
+        }
+    }
+}
+
+static void enchantment_info_printer( std::vector<iteminfo> &info,
+                                      std::vector<std::string> &always,
+                                      std::vector<std::string> &active,
+                                      std::vector<std::string> &inactive )
+{
+    if( !always.empty() ) {
+        info.emplace_back( "DESCRIPTION", string_format( _( "<bold>Always</bold>:" ) ) );
+        for( const std::string &entry : always ) {
+            info.emplace_back( "DESCRIPTION", string_format( "* %s", entry ) );
+        }
+    }
+    if( !active.empty() ) {
+        info.emplace_back( "DESCRIPTION", string_format( _( "<bold>When Active</bold>:" ) ) );
+        for( const std::string &entry : active ) {
+            info.emplace_back( "DESCRIPTION", string_format( "* %s", entry ) );
+        }
+    }
+    if( !inactive.empty() ) {
+        info.emplace_back( "DESCRIPTION", string_format( _( "<bold>When Inactive</bold>:" ) ) );
+        for( const std::string &entry : inactive ) {
+            info.emplace_back( "DESCRIPTION", string_format( "* %s", entry ) );
+        }
+    }
+}
+
+void item::enchantment_info( std::vector<iteminfo> &info, const iteminfo_query *parts,
+                             int /*batch*/, bool /*debug*/ ) const
+{
+    if( !parts->test( iteminfo_parts::DESCRIPTION_ENCHANTMENTS ) ) {
+        return;
+    }
+    insert_separation_line( info );
+    // if the item has relic data and the item is mundane show some details
+    if( type->relic_data ) {
+        // check WIELD
+        std::vector<std::string> always;
+        std::vector<std::string> active;
+        std::vector<std::string> inactive;
+        enchantment_info_helper( *this, enchantment::has::WIELD, always, active, inactive );
+        if( !always.empty() || !active.empty() || !inactive.empty() ) {
+            info.emplace_back( "DESCRIPTION",
+                               string_format( _( "When <bold>weilded</bold> this item provides:" ) ) );
+            enchantment_info_printer( info, always, active, inactive );
+        }
+        always.clear();
+        active.clear();
+        inactive.clear();
+        enchantment_info_helper( *this, enchantment::has::WORN, always, active, inactive );
+        if( !always.empty() || !active.empty() || !inactive.empty() ) {
+            info.emplace_back( "DESCRIPTION",
+                               string_format( _( "When <bold>worn</bold> this item provides:" ) ) );
+            enchantment_info_printer( info, always, active, inactive );
+        }
+        always.clear();
+        active.clear();
+        inactive.clear();
+        enchantment_info_helper( *this, enchantment::has::HELD, always, active, inactive );
+        if( !always.empty() || !active.empty() || !inactive.empty() ) {
+            info.emplace_back( "DESCRIPTION",
+                               string_format( _( "When <bold>carried</bold> this item provides:" ) ) );
+            enchantment_info_printer( info, always, active, inactive );
+        }
     }
 }
 
@@ -4656,6 +4898,14 @@ void item::repair_info( std::vector<iteminfo> &info, const iteminfo_query *parts
         enumerate_as_string( rep.begin(), rep.end(), []( const itype_id & e ) {
             return nname( e );
         }, enumeration_conjunction::or_ ) ) );
+
+        const std::string repairs_with = enumerate_as_string( type->repairs_with.begin(),
+        type->repairs_with.end(), []( const material_id & e ) {
+            return string_format( "<info>%s</info>", e->name() );
+        } );
+        if( !repairs_with.empty() ) {
+            info.emplace_back( "DESCRIPTION", string_format( _( "<bold>With</bold> %s." ), repairs_with ) );
+        }
         if( reinforceable() ) {
             info.emplace_back( "DESCRIPTION", _( "* This item can be <good>reinforced</good>." ) );
         }
@@ -4756,8 +5006,8 @@ void item::qualities_info( std::vector<iteminfo> &info, const iteminfo_query *pa
         // Tools with "charged_qualities" defined may have additional qualities when charged.
         // List them, and show whether there is enough charge to use those qualities.
         if( !type->charged_qualities.empty() && type->charges_to_use() > 0 ) {
-            // Use ammo_remaining() with player character to include bionic/UPS power
-            if( ammo_remaining( &get_player_character() ) >= type->charges_to_use() ) {
+            // Use ammo_sufficient() with player character to include bionic/UPS power
+            if( ammo_sufficient( &get_player_character() ) ) {
                 info.emplace_back( "QUALITIES", "", _( "<good>Has enough charges</good> for qualities:" ) );
             } else {
                 info.emplace_back( "QUALITIES", "",
@@ -4967,7 +5217,7 @@ void item::melee_combat_info( std::vector<iteminfo> &info, const iteminfo_query 
 
         if( base_stamina || base_dpstam ) {
             stam = player_character.get_total_melee_stamina_cost( this ) * -1;
-            stam_pct = truncf( stam * 1000.0 / player_character.get_stamina_max() ) / 10;
+            stam_pct = std::truncf( stam * 1000.0 / player_character.get_stamina_max() ) / 10;
         }
 
         if( base_dps || base_dpstam ) {
@@ -4981,7 +5231,7 @@ void item::melee_combat_info( std::vector<iteminfo> &info, const iteminfo_query 
 
         if( base_moves ) {
             info.emplace_back( "BASE", _( "Base moves per attack: " ), "",
-                               iteminfo::lower_is_better, attack_time() );
+                               iteminfo::lower_is_better, attack_time( player_character ) );
         }
 
         if( base_dps ) {
@@ -5192,7 +5442,7 @@ void item::properties_info( std::vector<iteminfo> &info, const iteminfo_query *p
                 not_rigid = true;
             }
         }
-        if( !not_rigid && !all_pockets_rigid() ) {
+        if( !not_rigid && !all_pockets_rigid() && !is_corpse() ) {
             info.emplace_back( "BASE",
                                _( "* This items pockets are <info>not rigid</info>.  Its"
                                   " volume increases with contents." ) );
@@ -5268,7 +5518,6 @@ void item::properties_info( std::vector<iteminfo> &info, const iteminfo_query *p
                                   "<neutral>detonate</neutral> it immediately." ) );
         }
     }
-
 
     if( parts->test( iteminfo_parts::DESCRIPTION_DIE ) && this->get_var( "die_num_sides", 0 ) != 0 ) {
         info.emplace_back( "DESCRIPTION",
@@ -5349,7 +5598,7 @@ void item::final_info( std::vector<iteminfo> &info, const iteminfo_query *parts,
         const holster_actor *ptr = dynamic_cast<const holster_actor *>
                                    ( e.get_use( "holster" )->get_actor_ptr() );
         const item holster_item( &e );
-        return ptr->can_holster( holster_item, *this );
+        return ptr->can_holster( holster_item, *this ) && !item_is_blacklisted( holster_item.typeId() );
     } );
 
     if( !holsters.empty() && parts->test( iteminfo_parts::DESCRIPTION_HOLSTERS ) ) {
@@ -5409,20 +5658,19 @@ void item::final_info( std::vector<iteminfo> &info, const iteminfo_query *parts,
         info.emplace_back( "DESCRIPTION", ntext );
     }
 
-
     // Price and barter value
     const int price_preapoc = price( false ) * batch;
     const int price_postapoc = price( true ) * batch;
     if( parts->test( iteminfo_parts::BASE_PRICE ) ) {
         insert_separation_line( info );
         info.emplace_back( "BASE", _( "Price: " ), _( "$<num>" ),
-                           iteminfo::is_decimal | iteminfo::lower_is_better | iteminfo::no_newline,
+                           iteminfo::is_decimal | iteminfo::no_newline,
                            static_cast<double>( price_preapoc ) / 100 );
     }
     if( price_preapoc != price_postapoc && parts->test( iteminfo_parts::BASE_BARTER ) ) {
         const std::string space = "  ";
         info.emplace_back( "BASE", space + _( "Barter value: " ), _( "$<num>" ),
-                           iteminfo::is_decimal | iteminfo::lower_is_better,
+                           iteminfo::is_decimal,
                            static_cast<double>( price_postapoc ) / 100 );
     }
 
@@ -5488,7 +5736,7 @@ void item::final_info( std::vector<iteminfo> &info, const iteminfo_query *parts,
     }
 
     if( is_armor() ) {
-        const ret_val<bool> can_wear = player_character.can_wear( *this, true );
+        const ret_val<void> can_wear = player_character.can_wear( *this, true );
         if( ! can_wear.success() ) {
             insert_separation_line( info );
             info.emplace_back( "DESCRIPTION",
@@ -5497,8 +5745,95 @@ void item::final_info( std::vector<iteminfo> &info, const iteminfo_query *parts,
         }
     }
 
+    // Vehicle parts or appliances using this item as a component
+    if( parts->test( iteminfo_parts::DESCRIPTION_VEHICLE_PARTS ) ) {
+        const itype_id tid = typeId();
+        std::vector<vpart_info> vparts;
 
+        for( const std::pair<const vpart_id, vpart_info> &vp : vpart_info::all() ) {
+            if( vp.second.base_item == tid ) {
+                vparts.push_back( vp.second );
+            }
+        }
+
+        const auto print_parts = [&info, &player_character](
+                                     const std::vector<vpart_info> &vparts,
+                                     const std::string & install_where_full,
+                                     const std::string & install_where_abbreviated,
+                                     const std::function<bool( const vpart_info & )> &predicate
+        ) {
+            // Maximum number of parts to display
+            constexpr int max_parts = 12;
+
+            // Pairs of <item name, has_skills_to_install>
+            std::vector<std::pair<std::string, bool>> result_parts;
+
+            int processed_parts = 0;
+
+            // Build result_names vector of at most the first `max_parts` items
+            for( const vpart_info &vp : vparts ) {
+                // Break out early if we've hit our limit
+                if( processed_parts++ > max_parts ) {
+                    break;
+                }
+
+                bool is_duplicate = std::any_of( result_parts.begin(), result_parts.end(),
+                [name = vp.name()]( const auto & pair ) {
+                    return pair.first == name;
+                } );
+
+                if( is_duplicate || !predicate( vp ) ) {
+                    continue; // skip part variants, they have same part names
+                }
+
+                bool can_install = player_character.meets_skill_requirements( vp.install_skills );
+
+                result_parts.emplace_back( std::make_pair( vp.name(), can_install ) );
+            }
+
+            if( result_parts.empty() ) {
+                return;
+            }
+
+            // Sort according to the user's locale
+            std::sort( result_parts.begin(), result_parts.end(), localized_compare );
+
+            // Endarken parts that can't be installed with the character's skills
+            const std::string installable_parts =
+                enumerate_as_string( result_parts.begin(), result_parts.end(),
+            []( const std::pair<std::string, bool> &p ) {
+                if( p.second ) {
+                    return p.first;
+                } else {
+                    return string_format( "<dark>%s</dark>", p.first );
+                }
+            } );
+
+            const int num_hidden_parts = vparts.size() - max_parts;
+            const std::string fmt = ( num_hidden_parts > 0 )
+                                    ? string_format( install_where_abbreviated, installable_parts )
+                                    : string_format( install_where_full, installable_parts );
+
+            insert_separation_line( info );
+            info.emplace_back( " DESCRIPTION", fmt );
+        };
+
+        print_parts( vparts,
+                     _( "You could install it in a vehicle: %s" ),
+                     _( "You could install it in a vehicle: %s, and more" ),
+        []( const vpart_info & vp ) {
+            return !vp.has_flag( vpart_bitflags::VPFLAG_APPLIANCE );
+        } );
+
+        print_parts( vparts,
+                     _( "You could install it as an appliance: %s" ),
+                     _( "You could install it as an appliance: %s, and more" ),
+        []( const vpart_info & vp ) {
+            return vp.has_flag( vpart_bitflags::VPFLAG_APPLIANCE );
+        } );
+    }
 }
+
 void item::ascii_art_info( std::vector<iteminfo> &info, const iteminfo_query * /* parts */,
                            int  /* batch */,
                            bool /* debug */ ) const
@@ -5519,7 +5854,6 @@ void item::ascii_art_info( std::vector<iteminfo> &info, const iteminfo_query * /
         }
     }
 }
-
 
 std::string item::info( std::vector<iteminfo> &info, const iteminfo_query *parts, int batch ) const
 {
@@ -5595,6 +5929,7 @@ std::string item::info( std::vector<iteminfo> &info, const iteminfo_query *parts
             book_info( info, parts, batch, debug );
             battery_info( info, parts, batch, debug );
             tool_info( info, parts, batch, debug );
+            actions_info( info, parts, batch, debug );
             component_info( info, parts, batch, debug );
             qualities_info( info, parts, batch, debug );
 
@@ -5607,6 +5942,7 @@ std::string item::info( std::vector<iteminfo> &info, const iteminfo_query *parts
             }
 
             repair_info( info, parts, batch, debug );
+            enchantment_info( info, parts, batch, debug );
             disassembly_info( info, parts, batch, debug );
             properties_info( info, parts, batch, debug );
             bionic_info( info, parts, batch, debug );
@@ -5618,7 +5954,6 @@ std::string item::info( std::vector<iteminfo> &info, const iteminfo_query *parts
 
         } else if( blockname == "footer" ) {
 
-
             final_info( info, parts, batch, debug );
             ascii_art_info( info, parts, batch, debug );
 
@@ -5628,9 +5963,6 @@ std::string item::info( std::vector<iteminfo> &info, const iteminfo_query *parts
 
         }
     }
-
-
-
 
     if( !info.empty() && info.back().sName == "--" ) {
         info.pop_back();
@@ -5724,16 +6056,19 @@ nc_color item::color_in_inventory( const Character *const ch ) const
     } else if( is_relic() && !has_flag( flag_MUNDANE ) ) {
         ret = c_pink;
     } else if( is_bionic() ) {
-        if( !player_character.has_bionic( type->bionic->id ) || type->bionic->id->dupes_allowed ) {
+        if( player_character.is_installable( this, false ).success() &&
+            ( !player_character.has_bionic( type->bionic->id ) || type->bionic->id->dupes_allowed ) ) {
             ret = player_character.bionic_installation_issues( type->bionic->id ).empty() ? c_green : c_red;
         } else if( !has_flag( flag_NO_STERILE ) ) {
             ret = c_dark_gray;
         }
     } else if( has_flag( flag_LEAK_DAM ) && has_flag( flag_RADIOACTIVE ) && damage() > 0 ) {
         ret = c_light_green;
-    } else if( ( active && !has_temperature() &&  !is_corpse() ) || ( is_corpse() && can_revive() ) ) {
+    } else if( ( active && !has_temperature() ) || ( is_corpse() && can_revive() ) ) {
         // Active items show up as yellow (corpses only if reviving)
         ret = c_yellow;
+    } else if( is_medication() || is_medical_tool() ) {
+        ret = c_light_blue;
     } else if( is_food() ) {
         // Give color priority to allergy (allergy > inedible by freeze or other conditions)
         // TODO: refactor u.will_eat to let this section handle coloring priority without duplicating code.
@@ -6027,16 +6362,61 @@ void item::on_pickup( Character &p )
     p.on_item_acquire( *this );
 }
 
+void item::update_inherited_flags()
+{
+    inherited_tags_cache.clear();
+
+    auto const inehrit_flags = [this]( FlagsSetType const & Flags ) {
+        for( flag_id const &f : Flags ) {
+            if( f->inherit() ) {
+                inherited_tags_cache.emplace( f );
+            }
+        }
+    };
+
+    for( const item *e : is_gun() ? gunmods() : toolmods() ) {
+        // gunmods fired separately do not contribute to base gun flags
+        if( !e->is_gun() ) {
+            inehrit_flags( e->get_flags() );
+            inehrit_flags( e->type->get_flags() );
+        }
+    }
+
+    for( const item_pocket *pocket : contents.get_all_contained_pockets() ) {
+        if( pocket->inherits_flags() ) {
+            for( const item *e : pocket->all_items_top() ) {
+                inehrit_flags( e->get_flags() );
+                inehrit_flags( e->type->get_flags() );
+            }
+        }
+    }
+}
+
 void item::on_contents_changed()
 {
     contents.update_open_pockets();
     cached_relative_encumbrance.reset();
     encumbrance_update_ = true;
+    update_inherited_flags();
 }
 
 void item::on_damage( int, damage_type )
 {
 
+}
+
+void item::on_damage_changed()
+{
+    if( is_firearm() && !has_flag( flag_NO_REPAIR ) ) {
+        faults.erase( fault_gun_damaged );
+        faults.erase( fault_gun_unaccurized );
+        if( damage_level() == -1 ) { // gun is fully repaired and accurized
+        } else if( damage_level() == 0 ) { // repaired but not accurized (++) yet
+            faults.emplace( fault_gun_unaccurized );
+        } else { // can be repaired
+            faults.emplace( fault_gun_damaged );
+        }
+    }
 }
 
 std::string item::dirt_symbol() const
@@ -6096,21 +6476,27 @@ std::string item::degradation_symbol() const
             dgr_symbol = colorize( "\u2581", c_red );
             break;
     }
-    return degrade_increments() == 0 ? "" : dgr_symbol;
+    return type->degrade_increments() == 0 ? "" : dgr_symbol;
 }
 
 std::string item::tname( unsigned int quantity, bool with_prefix, unsigned int truncate,
-                         bool with_contents ) const
+                         bool with_contents_full, bool with_collapsed, bool with_contents_abbrev ) const
 {
     // item damage and/or fouling level
     std::string damtext;
+
+    if( get_option<std::string>( "ASTERISK_POSITION" ) == "prefix" && with_prefix ) {
+        if( is_favorite ) {
+            damtext = _( "* " ); // Display asterisk for favorite items, before item's name
+        }
+    }
 
     // for portions of string that have <color_ etc in them, this aims to truncate the whole string correctly
     unsigned int truncate_override = 0;
 
     if( ( damage() != 0 || ( degradation() > 0 && degradation() >= max_damage() / 5 ) ||
           ( get_option<bool>( "ITEM_HEALTH_BAR" ) && is_armor() ) ) && !is_null() && with_prefix ) {
-        damtext = durability_indicator();
+        damtext += durability_indicator();
         if( get_option<bool>( "ITEM_HEALTH_BAR" ) ) {
             // get the utf8 width of the tags
             truncate_override = utf8_width( damtext, false ) - utf8_width( damtext, true );
@@ -6182,43 +6568,45 @@ std::string item::tname( unsigned int quantity, bool with_prefix, unsigned int t
     }
 
     /* only expand full contents name if with_contents == true */
-    if( with_contents && contents.num_item_stacks() == 1 ) {
-        const item &contents_item = contents.only_item();
+    if( with_contents_full && !contents.empty() && contents_only_one_type() ) {
+        const item &contents_item = contents.first_item();
         const unsigned contents_count =
             ( ( contents_item.made_of( phase_id::LIQUID ) ||
                 contents_item.is_food() || contents_item.count_by_charges() ) &&
               contents_item.charges > 1 )
             ? contents_item.charges
-            : 1;
+            : contents.num_item_stacks();
 
-        // with_contents=false for nested items to prevent excessively long names
-        const std::string contents_tname = contents_item.tname( contents_count, true, 0, false );
-
-        if( contents_tname != "none" ) {
+        if( !contents_item.is_null() ) {
+            // with_contents=false for nested items to prevent excessively long names
+            const std::string contents_tname = contents_item.tname( contents_count, true, 0, false, false,
+                                               contents_count == 1 );
+            std::string const ctnc = colorize( contents_tname, contents_item.color_in_inventory() );
             if( contents_count == 1 || !ammo_types().empty() ) {
                 // Don't append an item count for single items, or items that are ammo-exclusive
                 // (eg: quivers), as they format their own counts.
                 contents_suffix_text = string_format( pgettext( "item name",
                                                       //~ [container item name] " > [inner item name]
-                                                      " > %1$s" ), contents_tname );
+                                                      " > %1$s" ), ctnc );
             } else if( contents_count != 0 ) {
                 // Otherwise, add a contents count!
                 contents_suffix_text = string_format( pgettext( "item name",
                                                       //~ [container item name] " > [inner item name] (qty)
-                                                      " > %1$s (%2$zd)" ), contents_tname, contents_count );
+                                                      " > %1$s (%2$zd)" ), ctnc, contents_count );
             }
 
-            if( is_collapsed() ) {
+            if( is_collapsed() && with_collapsed ) {
                 contents_suffix_text += string_format( " %s", _( "hidden" ) );
             }
         }
-    } else if( !contents.empty_container() && contents.num_item_stacks() != 0 ) {
+    } else if( with_contents_abbrev && !contents.empty_container() &&
+               contents.num_item_stacks() != 0 ) {
         std::string const suffix =
             npgettext( "item name",
                        //~ [container item name] " > [count] item"
                        " > %1$zd%2$s item", " > %1$zd%2$s items", contents.num_item_stacks() );
         std::string const hidden =
-            is_collapsed() ? string_format( " %s", _( "hidden" ) ) : std::string();
+            is_collapsed() && with_collapsed ? string_format( " %s", _( "hidden" ) ) : std::string();
         contents_suffix_text = string_format( suffix, contents.num_item_stacks(), hidden );
     }
 
@@ -6345,8 +6733,7 @@ std::string item::tname( unsigned int quantity, bool with_prefix, unsigned int t
         tagtext += _( " (lit)" );
     } else if( has_flag( flag_IS_UPS ) && get_var( "cable" ) == "plugged_in" ) {
         tagtext += _( " (plugged in)" );
-    } else if( active && !has_temperature() && !is_corpse() &&
-               !string_ends_with( typeId().str(), "_on" ) ) {
+    } else if( active && !has_temperature() && !string_ends_with( typeId().str(), "_on" ) ) {
         // Usually the items whose ids end in "_on" have the "active" or "on" string already contained
         // in their name, also food is active while it rots.
         tagtext += _( " (active)" );
@@ -6358,13 +6745,18 @@ std::string item::tname( unsigned int quantity, bool with_prefix, unsigned int t
         tagtext += _( " (part sealed)" );
     }
 
-    if( is_favorite ) {
-        tagtext += _( " *" ); // Display asterisk for favorite items
+    if( get_option<std::string>( "ASTERISK_POSITION" ) == "suffix" ) {
+        if( is_favorite ) {
+            tagtext += _( " *" ); // Display asterisk for favorite items, after item's name
+        }
     }
 
     std::string modtext;
     if( gunmod_find( itype_barrel_small ) ) {
         modtext += _( "sawn-off " );
+    }
+    if( is_gun() && has_flag( flag_REMOVED_STOCK ) ) {
+        modtext += _( "pistol " );
     }
     if( is_relic() && relic_data->max_charges() > 0 && relic_data->charges_per_use() > 0 ) {
         tagtext += string_format( " (%d/%d)", relic_data->charges(), relic_data->max_charges() );
@@ -6390,7 +6782,7 @@ std::string item::tname( unsigned int quantity, bool with_prefix, unsigned int t
 }
 
 std::string item::display_money( unsigned int quantity, unsigned int total,
-                                 const cata::optional<unsigned int> &selected ) const
+                                 const std::optional<unsigned int> &selected ) const
 {
     if( selected ) {
         //~ This is a string to display the selected and total amount of money in a stack of cash cards.
@@ -6494,7 +6886,7 @@ std::string item::display_name( unsigned int quantity ) const
 
     if( amount || show_amt ) {
         if( is_money() ) {
-            amt = format_money( amount );
+            amt = " " + format_money( amount );
         } else {
             if( !ammotext.empty() ) {
                 ammotext = " " + ammotext;
@@ -6543,8 +6935,8 @@ std::string item::display_name( unsigned int quantity ) const
 
 bool item::is_collapsed() const
 {
-    return !contents.get_pockets( []( item_pocket const & pocket ) {
-        return pocket.settings.is_collapsed() and pocket.is_standard_type();
+    return !contents.empty() && !contents.get_pockets( []( item_pocket const & pocket ) {
+        return pocket.settings.is_collapsed() && pocket.is_standard_type();
     } ).empty();
 }
 
@@ -6574,33 +6966,33 @@ int item::price( bool practical ) const
     return res;
 }
 
-int item::price_no_contents( bool practical ) const
+int item::price_no_contents( bool practical, std::optional<int> price_override ) const
 {
     if( rotten() ) {
         return 0;
     }
-    int price = units::to_cent( practical ? type->price_post : type->price );
+    int price = price_override ? *price_override
+                : units::to_cent( practical ? type->price_post : type->price );
     if( damage() > 0 ) {
         // maximal damage level is 4, maximal reduction is 80% of the value.
         price -= price * static_cast< double >( damage_level() ) / 5;
-    }
-
-    if( is_filthy() ) {
-        price *= 0.8;
     }
 
     if( count_by_charges() || made_of( phase_id::LIQUID ) ) {
         // price from json data is for default-sized stack
         price *= charges / static_cast< double >( type->stack_size );
 
-    } else if( ( magazine_integral() || is_magazine() ) && ammo_remaining() && ammo_data() ) {
-        // items with integral magazines may contain ammunition which can affect the price
-        price += item( ammo_data(), calendar::turn, ammo_remaining() ).price( practical );
-
     } else if( is_tool() && type->tool->max_charges != 0 ) {
         // if tool has no ammo (e.g. spray can) reduce price proportional to remaining charges
         price *= ammo_remaining() / static_cast< double >( std::max( type->charges_default(), 1 ) );
 
+    }
+
+    if( is_filthy() ) {
+        // Filthy items receieve a fixed price malus. This means common clothing ends up
+        // with no value (it's *everywhere*), but valuable items retain most of their value.
+        // https://github.com/CleverRaven/Cataclysm-DDA/issues/49469
+        price = std::max( price - PRICE_FILTHY_MALUS, 0 );
     }
 
     return price;
@@ -6621,8 +7013,10 @@ units::mass item::weight( bool include_contents, bool integral ) const
     if( is_craft() ) {
         if( !craft_data_->cached_weight ) {
             units::mass ret = 0_gram;
-            for( const item &it : components ) {
-                ret += it.weight();
+            for( const item_components::type_vector_pair &tvp : components ) {
+                for( const item &it : tvp.second ) {
+                    ret += it.weight();
+                }
             }
             craft_data_->cached_weight = ret;
         }
@@ -6685,13 +7079,22 @@ units::mass item::weight( bool include_contents, bool integral ) const
         ret += links.weight();
     }
 
-    // reduce weight for sawn-off weapons capped to the apportioned weight of the barrel
+    // reduce weight for sawn-off barrel capped to the apportioned weight of the barrel
     if( gunmod_find( itype_barrel_small ) ) {
         const units::volume b = type->gun->barrel_volume;
         const units::mass max_barrel_weight = units::from_gram( to_milliliter( b ) );
         const units::mass barrel_weight = units::from_gram( b.value() * type->weight.value() /
                                           type->volume.value() );
         ret -= std::min( max_barrel_weight, barrel_weight );
+    }
+
+    // reduce weight for sawn-off stock
+    if( gunmod_find( itype_stock_none ) ) {
+        // Length taken from item::length(), height and width are "average" values
+        const float stock_dimensions = 0.26f * 0.11f * 0.04f; // length * height * width = 0.00114 m3.
+        // density of 'wood' material
+        const int density = 850;
+        ret -= units::from_kilogram( stock_dimensions * density );
     }
 
     return ret;
@@ -6725,19 +7128,25 @@ units::length item::length() const
         units::length stock_accessory_length = 0_mm;
         for( const item *mod : mods ) {
             // stocks and accessories for stocks are added with whatever the longest thing on the front is
-            if( mod->type->gunmod->location.str() == "stock" ) {
-                stock_length = mod->integral_length();
+            // stock mount is added here for support for sawing off stocks
+            if( mod->type->gunmod->location.str() == "stock mount" ) {
+                if( has_flag( flag_REMOVED_STOCK ) ) {
+                    // stock has been removed so slightly more length removed about 26cm
+                    stock_length -= 26_cm;
+                }
+            } else if( mod->type->gunmod->location.str() == "stock" ) {
+                stock_length = mod->type->integral_longest_side;
                 if( has_flag( flag_COLLAPSED_STOCK ) || has_flag( flag_FOLDED_STOCK ) ) {
                     // stock is folded so need to reduce length
 
                     // folded stock length is estimated at about 20 cm, LOP for guns should be about
                     // 13.5 inches and a folding stock folds past the trigger and isn't perfectly efficient
-                    stock_length = stock_length - 20_cm;
+                    stock_length -= 20_cm;
                 }
             } else if( mod->type->gunmod->location.str() == "stock accessory" ) {
-                stock_accessory_length = mod->integral_length();
+                stock_accessory_length = mod->type->integral_longest_side;
             } else {
-                units::length l = mod->integral_length();
+                units::length l = mod->type->integral_longest_side;
                 if( l > max_length ) {
                     max_length = l;
                 }
@@ -6751,18 +7160,14 @@ units::length item::length() const
     return max;
 }
 
-units::length item::integral_length() const
-{
-    return type->integral_longest_side;
-}
-
 units::volume item::collapsed_volume_delta() const
 {
     units::volume delta_volume = 0_ml;
 
     // COLLAPSIBLE_STOCK is the legacy version of this just here for mod support
     // TODO Remove at some point
-    if( is_gun() && ( has_flag( flag_COLLAPSIBLE_STOCK ) || has_flag( flag_COLLAPSED_STOCK ) ) ) {
+    if( is_gun() && ( has_flag( flag_COLLAPSIBLE_STOCK ) || has_flag( flag_COLLAPSED_STOCK ) ||
+                      has_flag( flag_REMOVED_STOCK ) ) ) {
         // consider only the base size of the gun (without mods)
         int tmpvol = get_var( "volume",
                               ( type->volume - type->gun->barrel_volume ) / units::legacy_volume_factor );
@@ -6819,8 +7224,10 @@ units::volume item::base_volume() const
 
     if( is_craft() ) {
         units::volume ret = 0_ml;
-        for( const item &it : components ) {
-            ret += it.base_volume();
+        for( const item_components::type_vector_pair &tvp : components ) {
+            for( const item &it : tvp.second ) {
+                ret += it.base_volume();
+            }
         }
         return ret;
     }
@@ -6850,10 +7257,13 @@ units::volume item::volume( bool integral, bool ignore_contents, int charges_in_
     if( is_craft() ) {
         if( !craft_data_->cached_volume ) {
             units::volume ret = 0_ml;
-            for( const item &it : components ) {
-                ret += it.volume();
+            for( const item_components::type_vector_pair &tvp : components ) {
+                for( const item &it : tvp.second ) {
+                    ret += it.volume();
+                }
             }
-            craft_data_->cached_volume = ret;
+            // 1 mL minimum craft volume to avoid 0 volume errors from practices or hammerspace
+            craft_data_->cached_volume = std::max( ret, 1_ml );
         }
         return *craft_data_->cached_volume;
     }
@@ -6913,10 +7323,10 @@ int item::lift_strength() const
     return std::max( mass / 10000, 1 );
 }
 
-int item::attack_time() const
+int item::attack_time( const Character &you ) const
 {
     int ret = 65 + ( volume() / 62.5_ml + weight() / 60_gram ) / count();
-    ret = calculate_by_enchantment_wield( ret, enchant_vals::mod::ITEM_ATTACK_SPEED,
+    ret = calculate_by_enchantment_wield( you, ret, enchant_vals::mod::ITEM_ATTACK_SPEED,
                                           true );
     return ret;
 }
@@ -7054,7 +7464,7 @@ bool item::has_fault_flag( const std::string &searched_flag ) const
 
 bool item::has_own_flag( const flag_id &f ) const
 {
-    return item_tags.count( f );
+    return item_tags.find( f ) != item_tags.end();
 }
 
 bool item::has_flag( const flag_id &f ) const
@@ -7065,25 +7475,9 @@ bool item::has_flag( const flag_id &f ) const
         return false;
     }
 
-    if( f->inherit() ) {
-        for( const item *e : is_gun() ? gunmods() : toolmods() ) {
-            // gunmods fired separately do not contribute to base gun flags
-            if( !e->is_gun() && e->has_flag( f ) ) {
-                return true;
-            }
-        }
-    }
-
-    // check flags from items in inherit pockets
-    for( const item_pocket *pocket : contents.get_all_contained_pockets() ) {
-        // if the pocket inherits flags
-        if( pocket->inherits_flags() ) {
-            for( const item *e : pocket->all_items_top() ) {
-                if( e->has_flag( f ) ) {
-                    return true;
-                }
-            }
-        }
+    ret = inherited_tags_cache.find( f ) != inherited_tags_cache.end();
+    if( ret ) {
+        return ret;
     }
 
     // other item type flags
@@ -7118,8 +7512,10 @@ item &item::unset_flag( const flag_id &flag )
 item &item::set_flag_recursive( const flag_id &flag )
 {
     set_flag( flag );
-    for( item &comp : components ) {
-        comp.set_flag_recursive( flag );
+    for( item_components::type_vector_pair &tvp : components ) {
+        for( item &it : tvp.second ) {
+            it.set_flag_recursive( flag );
+        }
     }
     return *this;
 }
@@ -7154,7 +7550,12 @@ int64_t item::get_property_int64_t( const std::string &prop, int64_t def ) const
     return def;
 }
 
-int item::get_quality( const quality_id &id, const bool strict_boiling ) const
+bool item::has_quality_nonrecursive( const quality_id &qual, int level ) const
+{
+    return get_quality_nonrecursive( qual ) >= level;
+}
+
+int item::get_quality_nonrecursive( const quality_id &id, const bool strict_boiling ) const
 {
     /**
      * EXCEPTION: Items with quality BOIL only count as such if they are empty.
@@ -7174,8 +7575,7 @@ int item::get_quality( const quality_id &id, const bool strict_boiling ) const
 
     // If tool has charged qualities and enough charge to use at least once
     // (using ammo_remaining() with player character to include bionic/UPS power)
-    if( !type->charged_qualities.empty() && type->charges_to_use() > 0 &&
-        type->charges_to_use() <= ammo_remaining( &get_player_character() ) ) {
+    if( !type->charged_qualities.empty() && ammo_sufficient( &get_player_character() ) ) {
         // see if any charged qualities are better than the current one
         for( const std::pair<const quality_id, int> &quality : type->charged_qualities ) {
             if( quality.first == id ) {
@@ -7183,6 +7583,21 @@ int item::get_quality( const quality_id &id, const bool strict_boiling ) const
             }
         }
     }
+
+    return return_quality;
+}
+
+int item::get_quality( const quality_id &id, const bool strict_boiling ) const
+{
+    /**
+     * EXCEPTION: Items with quality BOIL only count as such if they are empty.
+     */
+    if( strict_boiling && id == qual_BOIL && !contents.empty_container() ) {
+        return INT_MIN;
+    }
+
+    // First check the item itself
+    int return_quality = get_quality_nonrecursive( id, false );
 
     // If any contained item has a better quality, use that instead
     return_quality = std::max( return_quality, contents.best_quality( id ) );
@@ -7306,6 +7721,23 @@ void item::set_rot( time_duration val )
     rot = val;
 }
 
+void item::randomize_rot()
+{
+    if( is_comestible() && get_comestible()->spoils > 0_turns ) {
+        const double x_input = rng_float( 0.0, 1.0 );
+        const double k_rot = ( 1.0 - x_input ) / ( 1.0 + 2.0 * x_input );
+        set_rot( get_shelf_life() * k_rot );
+    }
+
+    for( item_pocket *pocket : contents.get_all_contained_pockets() ) {
+        if( pocket->spoil_multiplier() > 0.0f ) {
+            for( item *subitem : pocket->all_items_top() ) {
+                subitem->randomize_rot();
+            }
+        }
+    }
+}
+
 int item::spoilage_sort_order() const
 {
     int bottom = std::numeric_limits<int>::max();
@@ -7355,21 +7787,22 @@ int item::spoilage_sort_order() const
  * Rot maxes out at 105 F
  * Rot stops below 32 F (0C) and above 145 F (63 C)
  */
-static float calc_hourly_rotpoints_at_temp( const int temp )
+float item::calc_hourly_rotpoints_at_temp( const units::temperature &temp ) const
 {
-    const int dropoff = 38;
-    // ~3 C ditch our fancy equation and do a linear approach to 0 rot from 3 C -> 0 C
-    const int max_rot_temp = 105; // ~41 C Maximum rotting rate is at this temperature
-    const int safe_temp = 145; // ~63 C safe temperature above which food stops rotting
+    const units::temperature dropoff = units::from_fahrenheit( 38 ); // F, ~3 C
+    const float max_rot_temp = 105; // F, ~41 C, Maximum rotting rate is at this temperature
+    const float safe_temp = 145; // F, ~63 C, safe temperature above which food stops rotting
 
-    if( temp <= temperatures::freezing || temp > safe_temp ) {
+    if( temp <= temperatures::freezing ||
+        temp > units::from_fahrenheit( safe_temp ) ) {
         return 0.f;
     } else if( temp < dropoff ) {
-        // Linear progress from 32 F (0 C) to 38 F (3 C)
-        return 600.f * std::exp2( -27.f / 16.f ) * ( temp - temperatures::freezing );
-    } else if( temp < max_rot_temp ) {
+        // ditch our fancy equation and do a linear approach to 0 rot from 38 F (3 C) -> 32 F (0 C)
+        return 600.f * std::exp2( -27.f / 16.f ) * ( units::to_fahrenheit( temp ) - units::to_fahrenheit(
+                    temperatures::freezing ) );
+    } else if( temp < units::from_fahrenheit( max_rot_temp ) ) {
         // Exponential progress from 38 F (3 C) to 105 F (41 C)
-        return 3600.f * std::exp2( ( temp - 65.f ) / 16.f );
+        return 3600.f * std::exp2( ( units::to_fahrenheit( temp ) - 65.f ) / 16.f );
     } else {
         // Constant rot from 105 F (41 C) to 145 F (63 C)
         // This is approximately 20364.67 rot/hour
@@ -7377,36 +7810,7 @@ static float calc_hourly_rotpoints_at_temp( const int temp )
     }
 }
 
-static std::vector<float> calc_rot_array()
-{
-    // Array with precalculated rot rates
-    // Includes temperatures from 0 F ( -18C) to 145 F (63 F)
-    std::vector<float> ret;
-    ret.reserve( 146 );
-    for( int i = 0; i < 146; ++i ) {
-        ret.push_back( calc_hourly_rotpoints_at_temp( i ) );
-    }
-    return ret;
-}
-
-/**
- * Get the hourly rot for a given temperature from the precomputed table.
- * @see rot_chart
- */
-float item::get_hourly_rotpoints_at_temp( const int temp ) const
-{
-    if( temp <= 32 || temp > 145 ) {
-        return 0.0;
-    }
-
-    /**
-     * Precomputed rot lookup table.
-     */
-    static const std::vector<float> rot_chart = calc_rot_array();
-    return rot_chart[temp];
-}
-
-void item::calc_rot( int temp, const float spoil_modifier,
+void item::calc_rot( units::temperature temp, const float spoil_modifier,
                      const time_duration &time_delta )
 {
     // Avoid needlessly calculating already rotten things.  Corpses should
@@ -7434,16 +7838,7 @@ void item::calc_rot( int temp, const float spoil_modifier,
         temp = std::min( temperatures::fridge, temp );
     }
 
-    // simulation of different age of food at the start of the game and good/bad storage
-    // conditions by applying starting variation bonus/penalty of +/- 20% of base shelf-life
-    // positive = food was produced some time before calendar::start and/or bad storage
-    // negative = food was stored in good conditions before calendar::start
-    if( last_temp_check <= calendar::start_of_cataclysm ) {
-        time_duration spoil_variation = get_shelf_life() * 0.2f;
-        rot += rng( -spoil_variation, spoil_variation );
-    }
-
-    rot += factor * time_delta / 1_hours * get_hourly_rotpoints_at_temp( temp ) * 1_turns;
+    rot += factor * time_delta / 1_hours * calc_hourly_rotpoints_at_temp( temp ) * 1_turns;
 }
 
 void item::calc_rot_while_processing( time_duration processing_duration )
@@ -7567,7 +7962,7 @@ int item::get_encumber( const Character &p, const bodypart_id &bodypart,
         encumber = portion_data->encumber;
         if( is_gun() ) {
             encumber += volume() * portion_data->volume_encumber_modifier /
-                        portion_data->volume_per_encumbrance;
+                        armor_portion_data::volume_per_encumbrance;
         }
 
         // encumbrance from added or modified pockets
@@ -7692,36 +8087,36 @@ bool item::has_layer( const std::vector<layer_level> &ll ) const
         return false;
     }
     for( const layer_level &test_level : ll ) {
-        if( std::count( t->all_layers.begin(), t->all_layers.end(), test_level ) > 0 ) {
+        if( std::find( t->all_layers.begin(), t->all_layers.end(), test_level ) != t->all_layers.end() ) {
             return true;
         }
     }
     return false;
 }
 
-bool item::has_layer( const std::vector<layer_level> &ll, const bodypart_id bp ) const
+bool item::has_layer( const std::vector<layer_level> &ll, const bodypart_id &bp ) const
 {
     const std::vector<layer_level> layers = get_layer( bp );
     for( const layer_level &test_level : ll ) {
-        if( std::count( layers.begin(), layers.end(), test_level ) > 0 ) {
+        if( std::find( layers.begin(), layers.end(), test_level ) != layers.end() ) {
             return true;
         }
     }
     return false;
 }
 
-bool item::has_layer( const std::vector<layer_level> &ll, const sub_bodypart_id sbp ) const
+bool item::has_layer( const std::vector<layer_level> &ll, const sub_bodypart_id &sbp ) const
 {
     const std::vector<layer_level> layers = get_layer( sbp );
     for( const layer_level &test_level : ll ) {
-        if( std::count( layers.begin(), layers.end(), test_level ) > 0 ) {
+        if( std::find( layers.begin(), layers.end(), test_level ) != layers.end() ) {
             return true;
         }
     }
     return false;
 }
 
-layer_level item::get_highest_layer( const sub_bodypart_id sbp ) const
+layer_level item::get_highest_layer( const sub_bodypart_id &sbp ) const
 {
     layer_level highest_layer = layer_level::PERSONAL;
 
@@ -7838,12 +8233,10 @@ const armor_portion_data *item::portion_for_bodypart( const sub_bodypart_id &bod
         return nullptr;
     }
     for( const armor_portion_data &entry : t->sub_data ) {
-        if( !entry.sub_coverage.empty() ) {
-            for( const sub_bodypart_str_id &tmp : entry.sub_coverage ) {
-                const sub_bodypart_id &subpart = tmp;
-                if( subpart == bodypart ) {
-                    return &entry;
-                }
+        for( const sub_bodypart_str_id &tmp : entry.sub_coverage ) {
+            const sub_bodypart_id &subpart = tmp;
+            if( subpart == bodypart ) {
+                return &entry;
             }
         }
     }
@@ -7853,8 +8246,10 @@ const armor_portion_data *item::portion_for_bodypart( const sub_bodypart_id &bod
 float item::get_thickness() const
 {
     const islot_armor *t = find_armor_data();
+    // if an item isn't armor we assume it is 1mm thick
+    // TODO: Estimate normal items thickness or protection based on weight and density
     if( t == nullptr ) {
-        return is_pet_armor() ? type->pet_armor->thickness : 0.0f;
+        return is_pet_armor() ? type->pet_armor->thickness : 1.0f;
     }
     return t->avg_thickness();
 }
@@ -7862,6 +8257,7 @@ float item::get_thickness() const
 float item::get_thickness( const bodypart_id &bp ) const
 {
     const islot_armor *t = find_armor_data();
+    // don't return a fixed value for this one since an item is never going to be covering a body part
     if( t == nullptr ) {
         return is_pet_armor() ? type->pet_armor->thickness : 0.0f;
     }
@@ -7880,6 +8276,11 @@ float item::get_thickness( const bodypart_id &bp ) const
     return 0.0f;
 }
 
+float item::get_thickness( const sub_bodypart_id &bp ) const
+{
+    return get_thickness( bp->parent );
+}
+
 int item::get_warmth() const
 {
     const islot_armor *t = find_armor_data();
@@ -7893,7 +8294,7 @@ int item::get_warmth() const
     return result;
 }
 
-int item::get_warmth( const bodypart_id bp ) const
+int item::get_warmth( const bodypart_id &bp ) const
 {
     double warmth_val = 0.0;
     float limb_coverage = 0.0f;
@@ -7998,7 +8399,7 @@ bool item::is_money() const
 
 bool item::is_software() const
 {
-    if( const cata::optional<itype_id> &cont = type->default_container ) {
+    if( const std::optional<itype_id> &cont = type->default_container ) {
         return item( *cont ).is_software_storage();
     }
     return false;
@@ -8031,9 +8432,27 @@ int item::count() const
     return count_by_charges() ? charges : 1;
 }
 
-bool item::craft_has_charges()
+bool item::craft_has_charges() const
 {
     return count_by_charges() || ammo_types().empty();
+}
+
+float item::get_clothing_mod_val_for_damage_type( damage_type dmg_type ) const
+{
+    switch( dmg_type ) {
+        case damage_type::BASH:
+            return get_clothing_mod_val( clothing_mod_type_bash );
+        case damage_type::CUT:
+            return get_clothing_mod_val( clothing_mod_type_cut );
+        case damage_type::BULLET:
+            return get_clothing_mod_val( clothing_mod_type_bullet );
+        case damage_type::HEAT:
+            return get_clothing_mod_val( clothing_mod_type_fire );
+        case damage_type::ACID:
+            return get_clothing_mod_val( clothing_mod_type_acid );
+        default:
+            return 0.0f; // No mods for other damage types
+    }
 }
 
 #if defined(_MSC_VER)
@@ -8041,639 +8460,141 @@ bool item::craft_has_charges()
 #pragma optimize( "", off )
 #endif
 
-float item::bash_resist( bool to_self, const bodypart_id &bp, int roll ) const
+bool item::damage_type_none( damage_type dmg_type ) const
+{
+    return dmg_type == damage_type::NONE;
+}
+bool item::damage_type_invalid( damage_type dmg_type ) const
+{
+    return dmg_type >= damage_type::NUM;
+}
+bool item::damage_type_can_damage_items( damage_type dmg_type ) const
+{
+    return dmg_type >= damage_type::BASH;
+}
+
+template<typename bodypart_target>
+float item::resist( const damage_type dmg_type, const bool to_self,
+                    const bodypart_target &bp,
+                    const int resist_value ) const
 {
     if( is_null() ) {
         return 0.0f;
     }
-    const bool bp_null = bp == bodypart_id();
+
+    if( damage_type_none( dmg_type ) ) {
+        return 0.0f;
+    }
+
+    if( damage_type_invalid( dmg_type ) ) {
+        debugmsg( "Invalid damage type: %d", dmg_type );
+        return 0.0f;
+    }
+
+    // Implicit item damage immunity for damage types listed prior to bash
+    // Acid/fire immunity would be handled in _environmental_resist, but there are more
+    // dmg types that do not affect items such as PURE/COLD etc..
+    if( to_self && !damage_type_can_damage_items( dmg_type ) ) {
+        return std::numeric_limits<float>::max();
+    }
+
+    const bool bp_null = bp == bodypart_target();
+    const std::vector<const part_material *> &armor_mats = armor_made_of( bp );
+    const float avg_thickness = bp_null ? get_thickness() : get_thickness( bp );
+    return _resist( dmg_type, to_self, resist_value, bp_null, armor_mats, avg_thickness );
+}
+template float item::resist<bodypart_id>( const damage_type dmg_type, const bool to_self,
+        const bodypart_id &bp,
+        const int resist_value ) const;
+template float item::resist<sub_bodypart_id>( const damage_type dmg_type, const bool to_self,
+        const sub_bodypart_id &bp,
+        const int resist_value ) const;
+
+float item::_resist( const damage_type dmg_type, bool to_self, int resist_value,
+                     const bool bp_null,
+                     const std::vector<const part_material *> &armor_mats,
+                     const float avg_thickness ) const
+{
+    if( dmg_type == damage_type::STAB ) {
+        return 0.8f * _resist( damage_type::CUT, to_self, resist_value, bp_null, armor_mats,
+                               avg_thickness );
+    }
+
+    if( dmg_type == damage_type::ACID || dmg_type == damage_type::HEAT ) {
+        return _environmental_resist( dmg_type, to_self, resist_value, bp_null, armor_mats );
+    }
 
     float resist = 0.0f;
-    float mod = get_clothing_mod_val( clothing_mod_type_bash );
-    const int dmg = damage_level();
-    const float eff_damage = to_self ? std::min( dmg, 0 ) : std::max( dmg, 0 );
+    float mod = get_clothing_mod_val_for_damage_type( dmg_type );
+
+    const float damage_scale = damage_scaling( to_self );
 
     if( !bp_null ) {
-        const std::vector<const part_material *> &armor_mats = armor_made_of( bp );
         // If we have armour portion materials for this body part, use that instead
         if( !armor_mats.empty() ) {
             for( const part_material *m : armor_mats ) {
-                const float eff_thic = std::max( 0.1f, m->thickness - eff_damage );
                 // only count the material if it's hit
 
                 // if roll is -1 each material is rolled at this point individually
                 int internal_roll;
-                roll < 0 ? internal_roll = rng( 0, 99 ) : internal_roll = roll;
+                resist_value < 0 ? internal_roll = rng( 0, 99 ) : internal_roll = resist_value;
                 if( internal_roll < m->cover ) {
-                    resist += m->id->bash_resist() * eff_thic;
+                    resist += m->id->resist( dmg_type ) * m->thickness;
                 }
             }
-            return resist + mod;
+            return ( resist + mod ) * damage_scale;
         }
     }
 
     // base resistance
     // Don't give reinforced items +armor, just more resistance to ripping
-    const float avg_thickness = bp_null ? get_thickness() : get_thickness( bp );
-    const float eff_thickness = std::max( 0.1f, avg_thickness - eff_damage );
     const int total = type->mat_portion_total == 0 ? 1 : type->mat_portion_total;
     const std::map<material_id, int> mats = made_of();
     if( !mats.empty() ) {
         for( const auto &m : mats ) {
-            resist += m.first->bash_resist() * m.second;
+            resist += m.first->resist( dmg_type ) * m.second;
         }
         // Average based portion of materials
         resist /= total;
     }
 
-    return ( resist * eff_thickness ) + mod;
+    return ( resist * avg_thickness + mod ) * damage_scale;
 }
 
-float item::bash_resist( const sub_bodypart_id &bp, bool to_self, int roll ) const
+float item::_environmental_resist( const damage_type dmg_type, const bool to_self,
+                                   int base_env_resist,
+                                   const bool bp_null,
+                                   const std::vector<const part_material *> &armor_mats ) const
 {
-    if( is_null() ) {
-        return 0.0f;
+    if( to_self ) {
+        // Currently no items are damaged by acid, and fire is handled elsewhere
+        return std::numeric_limits<float>::max();
     }
 
     float resist = 0.0f;
-    float mod = get_clothing_mod_val( clothing_mod_type_bash );
-    const int dmg = damage_level();
-    const float eff_damage = to_self ? std::min( dmg, 0 ) : std::max( dmg, 0 );
-
-    const std::vector<const part_material *> &armor_mats = armor_made_of( bp );
-    // If we have armour portion materials for this body part, use that instead
-    if( !armor_mats.empty() ) {
-        for( const part_material *m : armor_mats ) {
-            const float eff_thic = std::max( 0.1f, m->thickness - eff_damage );
-            // only count the material if it's hit
-
-            // if roll is -1 each material is rolled at this point individually
-            int internal_roll;
-            roll < 0 ? internal_roll = rng( 0, 99 ) : internal_roll = roll;
-            if( internal_roll < m->cover ) {
-                resist += m->id->bash_resist() * eff_thic;
-            }
-        }
-        return resist + mod;
-    }
-
-    // base resistance this chunk is needed for items defined the old materials way
-    // Don't give reinforced items +armor, just more resistance to ripping
-    const float avg_thickness = get_thickness( bp->parent );
-    const float eff_thickness = std::max( 0.1f, avg_thickness - eff_damage );
-    const int total = type->mat_portion_total == 0 ? 1 : type->mat_portion_total;
-    const std::map<material_id, int> mats = made_of();
-    if( !mats.empty() ) {
-        for( const auto &m : mats ) {
-            resist += m.first->bash_resist() * m.second;
-        }
-        // Average based portion of materials
-        resist /= total;
-    }
-
-    return ( resist * eff_thickness ) + mod;
-
-}
-
-float item::cut_resist( bool to_self, const bodypart_id &bp, int roll ) const
-{
-    if( is_null() ) {
-        return 0.0f;
-    }
-    const bool bp_null = bp == bodypart_id();
-
-    float resist = 0.0f;
-    float mod = get_clothing_mod_val( clothing_mod_type_cut );
-    const int dmg = damage_level();
-    const float eff_damage = to_self ? std::min( dmg, 0 ) : std::max( dmg, 0 );
+    float mod = get_clothing_mod_val_for_damage_type( dmg_type );
 
     if( !bp_null ) {
-        const std::vector<const part_material *> &armor_mats = armor_made_of( bp );
         // If we have armour portion materials for this body part, use that instead
         if( !armor_mats.empty() ) {
             for( const part_material *m : armor_mats ) {
-                const float eff_thic = std::max( 0.1f, m->thickness - eff_damage );
-                // only count the material if it's hit
-
-                // if roll is -1 each material is rolled at this point individually
-                int internal_roll;
-                roll < 0 ? internal_roll = rng( 0, 99 ) : internal_roll = roll;
-                if( internal_roll < m->cover ) {
-                    resist += m->id->cut_resist() * eff_thic;
-                }
-            }
-            return resist + mod;
-        }
-    }
-
-    // base resistance
-    // Don't give reinforced items +armor, just more resistance to ripping
-    const float avg_thickness = bp_null ? get_thickness() : get_thickness( bp );
-    const float eff_thickness = std::max( 0.1f, avg_thickness - eff_damage );
-    const int total = type->mat_portion_total == 0 ? 1 : type->mat_portion_total;
-    const std::map<material_id, int> mats = made_of();
-    if( !mats.empty() ) {
-        for( const auto &m : mats ) {
-            resist += m.first->cut_resist() * m.second;
-        }
-        // Average based portion of materials
-        resist /= total;
-    }
-
-    return ( resist * eff_thickness ) + mod;
-}
-
-float item::cut_resist( const sub_bodypart_id &bp, bool to_self, int roll ) const
-{
-    if( is_null() ) {
-        return 0.0f;
-    }
-
-    float resist = 0.0f;
-    float mod = get_clothing_mod_val( clothing_mod_type_cut );
-    const int dmg = damage_level();
-    const float eff_damage = to_self ? std::min( dmg, 0 ) : std::max( dmg, 0 );
-
-    const std::vector<const part_material *> &armor_mats = armor_made_of( bp );
-    // If we have armour portion materials for this body part, use that instead
-    if( !armor_mats.empty() ) {
-        for( const part_material *m : armor_mats ) {
-            const float eff_thic = std::max( 0.1f, m->thickness - eff_damage );
-            // only count the material if it's hit
-
-            // if roll is -1 each material is rolled at this point individually
-            int internal_roll;
-            roll < 0 ? internal_roll = rng( 0, 99 ) : internal_roll = roll;
-            if( internal_roll < m->cover ) {
-                resist += m->id->cut_resist() * eff_thic;
-            }
-        }
-        return resist + mod;
-    }
-
-    // base resistance this chunk is needed for items defined the old materials way
-    // Don't give reinforced items +armor, just more resistance to ripping
-    const float avg_thickness = get_thickness( bp->parent );
-    const float eff_thickness = std::max( 0.1f, avg_thickness - eff_damage );
-    const int total = type->mat_portion_total == 0 ? 1 : type->mat_portion_total;
-    const std::map<material_id, int> mats = made_of();
-    if( !mats.empty() ) {
-        for( const auto &m : mats ) {
-            resist += m.first->cut_resist() * m.second;
-        }
-        // Average based portion of materials
-        resist /= total;
-    }
-
-    return ( resist * eff_thickness ) + mod;
-}
-
-#if defined(_MSC_VER)
-#pragma optimize( "", on )
-#endif
-
-float item::stab_resist( bool to_self, const bodypart_id &bp, int roll ) const
-{
-    // Better than hardcoding it in multiple places
-    return 0.8f * cut_resist( to_self, bp, roll );
-}
-
-float item::stab_resist( const sub_bodypart_id &bp, bool to_self,  int roll ) const
-{
-    // Better than hardcoding it in multiple places
-    return 0.8f * cut_resist( bp, to_self, roll );
-}
-
-float item::bullet_resist( bool to_self, const bodypart_id &bp, int roll ) const
-{
-    if( is_null() ) {
-        return 0.0f;
-    }
-    const bool bp_null = bp == bodypart_id();
-
-    float resist = 0.0f;
-    float mod = get_clothing_mod_val( clothing_mod_type_bullet );
-    const int dmg = damage_level();
-    const float eff_damage = to_self ? std::min( dmg, 0 ) : std::max( dmg, 0 );
-
-    if( !bp_null ) {
-        const std::vector<const part_material *> &armor_mats = armor_made_of( bp );
-        // If we have armour portion materials for this body part, use that instead
-        if( !armor_mats.empty() ) {
-            for( const part_material *m : armor_mats ) {
-                const float eff_thic = std::max( 0.1f, m->thickness - eff_damage );
-                // only count the material if it's hit
-
-                // if roll is -1 each material is rolled at this point individually
-                int internal_roll;
-                roll < 0 ? internal_roll = rng( 0, 99 ) : internal_roll = roll;
-                if( internal_roll < m->cover ) {
-                    resist += m->id->bullet_resist() * eff_thic;
-                }
-            }
-            return resist + mod;
-        }
-    }
-
-    // base resistance
-    // Don't give reinforced items +armor, just more resistance to ripping
-    const float avg_thickness = bp_null ? get_thickness() : get_thickness( bp );
-    const float eff_thickness = std::max( 0.1f, avg_thickness - eff_damage );
-    const int total = type->mat_portion_total == 0 ? 1 : type->mat_portion_total;
-    const std::map<material_id, int> mats = made_of();
-    if( !mats.empty() ) {
-        for( const auto &m : mats ) {
-            resist += m.first->bullet_resist() * m.second;
-        }
-        // Average based portion of materials
-        resist /= total;
-    }
-
-    return ( resist * eff_thickness ) + mod;
-}
-
-float item::bullet_resist( const sub_bodypart_id &bp, bool to_self, int roll ) const
-{
-    if( is_null() ) {
-        return 0.0f;
-    }
-
-    float resist = 0.0f;
-    float mod = get_clothing_mod_val( clothing_mod_type_bullet );
-    const int dmg = damage_level();
-    const float eff_damage = to_self ? std::min( dmg, 0 ) : std::max( dmg, 0 );
-
-    const std::vector<const part_material *> &armor_mats = armor_made_of( bp );
-    // If we have armour portion materials for this body part, use that instead
-    if( !armor_mats.empty() ) {
-        for( const part_material *m : armor_mats ) {
-            const float eff_thic = std::max( 0.1f, m->thickness - eff_damage );
-            // only count the material if it's hit
-
-            // if roll is -1 each material is rolled at this point individually
-            int internal_roll;
-            roll < 0 ? internal_roll = rng( 0, 99 ) : internal_roll = roll;
-            if( internal_roll < m->cover ) {
-                resist += m->id->bullet_resist() * eff_thic;
-            }
-        }
-        return resist + mod;
-    }
-
-    // base resistance this chunk is needed for items defined the old materials way
-    // Don't give reinforced items +armor, just more resistance to ripping
-    const float avg_thickness = get_thickness( bp->parent );
-    const float eff_thickness = std::max( 0.1f, avg_thickness - eff_damage );
-    const int total = type->mat_portion_total == 0 ? 1 : type->mat_portion_total;
-    const std::map<material_id, int> mats = made_of();
-    if( !mats.empty() ) {
-        for( const auto &m : mats ) {
-            resist += m.first->bullet_resist() * m.second;
-        }
-        // Average based portion of materials
-        resist /= total;
-    }
-
-    return ( resist * eff_thickness ) + mod;
-}
-
-float item::biological_resist( bool to_self, const bodypart_id &bp, int roll ) const
-{
-    if( to_self ) {
-        // Currently no items are damaged by acid
-        return std::numeric_limits<float>::max();
-    }
-
-    if( is_null() ) {
-        return 0.0f;
-    }
-    const bool bp_null = bp == bodypart_id();
-
-    float resist = 0.0f;
-    const int dmg = damage_level();
-    const float eff_damage = to_self ? std::min( dmg, 0 ) : std::max( dmg, 0 );
-
-    if( !bp_null ) {
-        const std::vector<const part_material *> &armor_mats = armor_made_of( bp );
-        // If we have armour portion materials for this body part, use that instead
-        if( !armor_mats.empty() ) {
-            for( const part_material *m : armor_mats ) {
-                const float eff_thic = std::max( 0.1f, m->thickness - eff_damage );
-                // only count the material if it's hit
-
-                // if roll is -1 each material is rolled at this point individually
-                int internal_roll;
-                roll < 0 ? internal_roll = rng( 0, 99 ) : internal_roll = roll;
-                if( internal_roll < m->cover ) {
-                    resist += m->id->biological_resist() * eff_thic;
-                }
-            }
-            return resist;
-        }
-    }
-
-    // base resistance
-    // Don't give reinforced items +armor, just more resistance to ripping
-    const float avg_thickness = bp_null ? get_thickness() : get_thickness( bp );
-    const float eff_thickness = std::max( 0.1f, avg_thickness - eff_damage );
-    const int total = type->mat_portion_total == 0 ? 1 : type->mat_portion_total;
-    const std::map<material_id, int> mats = made_of();
-    if( !mats.empty() ) {
-        for( const auto &m : mats ) {
-            resist += m.first->biological_resist() * m.second;
-        }
-        // Average based portion of materials
-        resist /= total;
-    }
-
-    return resist * eff_thickness;
-}
-
-float item::biological_resist( const sub_bodypart_id &bp, bool to_self, int roll ) const
-{
-    if( to_self ) {
-        // Currently no items are damaged by acid
-        return std::numeric_limits<float>::max();
-    }
-
-    if( is_null() ) {
-        return 0.0f;
-    }
-
-    float resist = 0.0f;
-    const int dmg = damage_level();
-    const float eff_damage = to_self ? std::min( dmg, 0 ) : std::max( dmg, 0 );
-
-    const std::vector<const part_material *> &armor_mats = armor_made_of( bp );
-    // If we have armour portion materials for this body part, use that instead
-    if( !armor_mats.empty() ) {
-        for( const part_material *m : armor_mats ) {
-            const float eff_thic = std::max( 0.1f, m->thickness - eff_damage );
-            // only count the material if it's hit
-
-            // if roll is -1 each material is rolled at this point individually
-            int internal_roll;
-            roll < 0 ? internal_roll = rng( 0, 99 ) : internal_roll = roll;
-            if( internal_roll < m->cover ) {
-                resist += m->id->biological_resist() * eff_thic;
-            }
-        }
-        return resist;
-    }
-
-    // base resistance this chunk is needed for items defined the old materials way
-    // Don't give reinforced items +armor, just more resistance to ripping
-    const float avg_thickness = get_thickness( bp->parent );
-    const float eff_thickness = std::max( 0.1f, avg_thickness - eff_damage );
-    const int total = type->mat_portion_total == 0 ? 1 : type->mat_portion_total;
-    const std::map<material_id, int> mats = made_of();
-    if( !mats.empty() ) {
-        for( const auto &m : mats ) {
-            resist += m.first->biological_resist() * m.second;
-        }
-        // Average based portion of materials
-        resist /= total;
-    }
-
-    return resist * eff_thickness;
-}
-
-float item::electric_resist( bool to_self, const bodypart_id &bp, int roll ) const
-{
-    if( to_self ) {
-        // Currently no items are damaged by acid
-        return std::numeric_limits<float>::max();
-    }
-
-    if( is_null() ) {
-        return 0.0f;
-    }
-    const bool bp_null = bp == bodypart_id();
-
-    float resist = 0.0f;
-    const int dmg = damage_level();
-    const float eff_damage = to_self ? std::min( dmg, 0 ) : std::max( dmg, 0 );
-
-    if( !bp_null ) {
-        const std::vector<const part_material *> &armor_mats = armor_made_of( bp );
-        // If we have armour portion materials for this body part, use that instead
-        if( !armor_mats.empty() ) {
-            for( const part_material *m : armor_mats ) {
-                const float eff_thic = std::max( 0.1f, m->thickness - eff_damage );
-                // only count the material if it's hit
-
-                // if roll is -1 each material is rolled at this point individually
-                int internal_roll;
-                roll < 0 ? internal_roll = rng( 0, 99 ) : internal_roll = roll;
-                if( internal_roll < m->cover ) {
-                    resist += m->id->elec_resist() * eff_thic;
-                }
-            }
-            return resist;
-        }
-    }
-
-    // base resistance
-    // Don't give reinforced items +armor, just more resistance to ripping
-    const float avg_thickness = bp_null ? get_thickness() : get_thickness( bp );
-    const float eff_thickness = std::max( 0.1f, avg_thickness - eff_damage );
-    const int total = type->mat_portion_total == 0 ? 1 : type->mat_portion_total;
-    const std::map<material_id, int> mats = made_of();
-    if( !mats.empty() ) {
-        for( const auto &m : mats ) {
-            resist += m.first->elec_resist() * m.second;
-        }
-        // Average based portion of materials
-        resist /= total;
-    }
-
-    return resist * eff_thickness;
-}
-
-float item::electric_resist( const sub_bodypart_id &bp, bool to_self, int roll ) const
-{
-    if( to_self ) {
-        // Currently no items are damaged by acid
-        return std::numeric_limits<float>::max();
-    }
-
-    if( is_null() ) {
-        return 0.0f;
-    }
-
-    float resist = 0.0f;
-    const int dmg = damage_level();
-    const float eff_damage = to_self ? std::min( dmg, 0 ) : std::max( dmg, 0 );
-
-    const std::vector<const part_material *> &armor_mats = armor_made_of( bp );
-    // If we have armour portion materials for this body part, use that instead
-    if( !armor_mats.empty() ) {
-        for( const part_material *m : armor_mats ) {
-            const float eff_thic = std::max( 0.1f, m->thickness - eff_damage );
-            // only count the material if it's hit
-
-            // if roll is -1 each material is rolled at this point individually
-            int internal_roll;
-            roll < 0 ? internal_roll = rng( 0, 99 ) : internal_roll = roll;
-            if( internal_roll < m->cover ) {
-                resist += m->id->elec_resist() * eff_thic;
-            }
-        }
-        return resist;
-    }
-
-    // base resistance this chunk is needed for items defined the old materials way
-    // Don't give reinforced items +armor, just more resistance to ripping
-    const float avg_thickness = get_thickness( bp->parent );
-    const float eff_thickness = std::max( 0.1f, avg_thickness - eff_damage );
-    const int total = type->mat_portion_total == 0 ? 1 : type->mat_portion_total;
-    const std::map<material_id, int> mats = made_of();
-    if( !mats.empty() ) {
-        for( const auto &m : mats ) {
-            resist += m.first->elec_resist() * m.second;
-        }
-        // Average based portion of materials
-        resist /= total;
-    }
-
-    return resist * eff_thickness;
-}
-
-float item::cold_resist( bool to_self, const bodypart_id &bp, int roll ) const
-{
-    if( to_self ) {
-        // Currently no items are damaged by acid
-        return std::numeric_limits<float>::max();
-    }
-
-    if( is_null() ) {
-        return 0.0f;
-    }
-    const bool bp_null = bp == bodypart_id();
-
-    float resist = 0.0f;
-    const int dmg = damage_level();
-    const float eff_damage = to_self ? std::min( dmg, 0 ) : std::max( dmg, 0 );
-
-    if( !bp_null ) {
-        const std::vector<const part_material *> &armor_mats = armor_made_of( bp );
-        // If we have armour portion materials for this body part, use that instead
-        if( !armor_mats.empty() ) {
-            for( const part_material *m : armor_mats ) {
-                const float eff_thic = std::max( 0.1f, m->thickness - eff_damage );
-                // only count the material if it's hit
-
-                // if roll is -1 each material is rolled at this point individually
-                int internal_roll;
-                roll < 0 ? internal_roll = rng( 0, 99 ) : internal_roll = roll;
-                if( internal_roll < m->cover ) {
-                    resist += m->id->cold_resist() * eff_thic;
-                }
-            }
-            return resist;
-        }
-    }
-
-    // base resistance
-    // Don't give reinforced items +armor, just more resistance to ripping
-    const float avg_thickness = bp_null ? get_thickness() : get_thickness( bp );
-    const float eff_thickness = std::max( 0.1f, avg_thickness - eff_damage );
-    const int total = type->mat_portion_total == 0 ? 1 : type->mat_portion_total;
-    const std::map<material_id, int> mats = made_of();
-    if( !mats.empty() ) {
-        for( const auto &m : mats ) {
-            resist += m.first->cold_resist() * m.second;
-        }
-        // Average based portion of materials
-        resist /= total;
-    }
-
-    return resist * eff_thickness;
-}
-
-float item::cold_resist( const sub_bodypart_id &bp, bool to_self, int roll ) const
-{
-    if( to_self ) {
-        // Currently no items are damaged by acid
-        return std::numeric_limits<float>::max();
-    }
-
-    if( is_null() ) {
-        return 0.0f;
-    }
-
-    float resist = 0.0f;
-    const int dmg = damage_level();
-    const float eff_damage = to_self ? std::min( dmg, 0 ) : std::max( dmg, 0 );
-
-    const std::vector<const part_material *> &armor_mats = armor_made_of( bp );
-    // If we have armour portion materials for this body part, use that instead
-    if( !armor_mats.empty() ) {
-        for( const part_material *m : armor_mats ) {
-            const float eff_thic = std::max( 0.1f, m->thickness - eff_damage );
-            // only count the material if it's hit
-
-            // if roll is -1 each material is rolled at this point individually
-            int internal_roll;
-            roll < 0 ? internal_roll = rng( 0, 99 ) : internal_roll = roll;
-            if( internal_roll < m->cover ) {
-                resist += m->id->cold_resist() * eff_thic;
-            }
-        }
-        return resist;
-    }
-
-    // base resistance this chunk is needed for items defined the old materials way
-    // Don't give reinforced items +armor, just more resistance to ripping
-    const float avg_thickness = get_thickness( bp->parent );
-    const float eff_thickness = std::max( 0.1f, avg_thickness - eff_damage );
-    const int total = type->mat_portion_total == 0 ? 1 : type->mat_portion_total;
-    const std::map<material_id, int> mats = made_of();
-    if( !mats.empty() ) {
-        for( const auto &m : mats ) {
-            resist += m.first->cold_resist() * m.second;
-        }
-        // Average based portion of materials
-        resist /= total;
-    }
-
-    return resist * eff_thickness;
-}
-
-float item::acid_resist( bool to_self, int base_env_resist, const bodypart_id &bp ) const
-{
-    if( to_self ) {
-        // Currently no items are damaged by acid
-        return std::numeric_limits<float>::max();
-    }
-
-    float resist = 0.0f;
-    float mod = get_clothing_mod_val( clothing_mod_type_acid );
-    if( is_null() ) {
-        return 0.0f;
-    }
-    if( bp != bodypart_id() ) {
-        const std::vector<const part_material *> &armor_mats = armor_made_of( bp );
-        // If we have armour portion materials for this body part, use that instead
-        if( !armor_mats.empty() ) {
-            for( const part_material *m : armor_mats ) {
-                resist += m->id->acid_resist() * m->cover * 0.01f;
+                resist += m->id->resist( dmg_type ) * m->cover * 0.01f;
             }
             const int env = get_env_resist( base_env_resist );
             if( env < 10 ) {
                 resist *= env / 10.0f;
             }
-            return resist + mod;
         }
+        return resist + mod;
     }
 
     const int total = type->mat_portion_total == 0 ? 1 : type->mat_portion_total;
     const std::map<material_id, int> mats = made_of();
     if( !mats.empty() ) {
-        // Not sure why cut and bash get an armor thickness bonus but acid doesn't,
+        // Not sure why cut and bash get an armor thickness bonus but acid/fire doesn't,
         // but such is the way of the code.
         for( const auto &m : mats ) {
-            resist += m.first->acid_resist() * m.second;
+            resist += m.first->resist( dmg_type ) * m.second;
         }
         // Average based portion of materials
         resist /= total;
@@ -8688,104 +8609,9 @@ float item::acid_resist( bool to_self, int base_env_resist, const bodypart_id &b
     return resist + mod;
 }
 
-float item::acid_resist( const sub_bodypart_id &bp, bool to_self, int base_env_resist ) const
-{
-    if( to_self ) {
-        // Currently no items are damaged by acid
-        return std::numeric_limits<float>::max();
-    }
-
-    float resist = 0.0f;
-    float mod = get_clothing_mod_val( clothing_mod_type_acid );
-    if( is_null() ) {
-        return 0.0f;
-    }
-    const std::vector<const part_material *> &armor_mats = armor_made_of( bp );
-    // If we have armour portion materials for this body part, use that instead
-    if( !armor_mats.empty() ) {
-        for( const part_material *m : armor_mats ) {
-            resist += m->id->acid_resist() * m->cover * 0.01f;
-        }
-        const int env = get_env_resist( base_env_resist );
-        if( env < 10 ) {
-            resist *= env / 10.0f;
-        }
-    }
-    return resist + mod;
-}
-
-float item::fire_resist( bool to_self, int base_env_resist, const bodypart_id &bp ) const
-{
-    if( to_self ) {
-        // Fire damages items in a different way
-        return std::numeric_limits<float>::max();
-    }
-
-    float resist = 0.0f;
-    float mod = get_clothing_mod_val( clothing_mod_type_fire );
-    if( is_null() ) {
-        return 0.0f;
-    }
-    if( bp != bodypart_id() ) {
-        const std::vector<const part_material *> &armor_mats = armor_made_of( bp );
-        // If we have armour portion materials for this body part, use that instead
-        if( !armor_mats.empty() ) {
-            for( const part_material *m : armor_mats ) {
-                resist += m->id->fire_resist() * m->cover * 0.01f;
-            }
-            const int env = get_env_resist( base_env_resist );
-            if( env < 10 ) {
-                resist *= env / 10.0f;
-            }
-            return resist + mod;
-        }
-    }
-
-    const std::map<material_id, int> mats = made_of();
-    const int total = type->mat_portion_total == 0 ? 1 : type->mat_portion_total;
-    if( !mats.empty() ) {
-        for( const auto &m : mats ) {
-            resist += m.first->fire_resist() * m.second;
-        }
-        // Average based portion of materials
-        resist /= total;
-    }
-
-    const int env = get_env_resist( base_env_resist );
-    if( env < 10 ) {
-        // Iron resists immersion in magma, iron-clad knight won't.
-        resist *= env / 10.0f;
-    }
-
-    return resist + mod;
-}
-
-float item::fire_resist( const sub_bodypart_id &bp, bool to_self, int base_env_resist ) const
-{
-    if( to_self ) {
-        // Fire damages items in a different way
-        return std::numeric_limits<float>::max();
-    }
-
-    float resist = 0.0f;
-    float mod = get_clothing_mod_val( clothing_mod_type_fire );
-    if( is_null() ) {
-        return 0.0f;
-    }
-    const std::vector<const part_material *> &armor_mats = armor_made_of( bp );
-    // If we have armour portion materials for this body part, use that instead
-    if( !armor_mats.empty() ) {
-        for( const part_material *m : armor_mats ) {
-            resist += m->id->fire_resist() * m->cover * 0.01f;
-        }
-        const int env = get_env_resist( base_env_resist );
-        if( env < 10 ) {
-            resist *= env / 10.0f;
-        }
-    }
-
-    return resist + mod;
-}
+#if defined(_MSC_VER)
+#pragma optimize( "", on )
+#endif
 
 int item::breathability( const bodypart_id &bp ) const
 {
@@ -8871,11 +8697,6 @@ int item::max_damage() const
     return type->damage_max();
 }
 
-int item::degrade_increments() const
-{
-    return type->degrade_increments();
-}
-
 float item::get_relative_health() const
 {
     return ( max_damage() + 1.0f - damage() ) / ( max_damage() + 1.0f );
@@ -8914,11 +8735,13 @@ bool item::mod_damage( int qty, damage_type dt )
 
     if( qty > 0 && !destroy ) {
         int degrade = std::max( get_dmg_lvl_internal( damage_, min_damage(), max_damage() ) - dmg_lvl, 0 );
-        int incr = degrade_increments();
+        int incr = type->degrade_increments();
         if( incr > 0 ) {
             degradation_ += degrade * ( max_damage() - min_damage() ) / incr;
         }
     }
+
+    on_damage_changed();
 
     return destroy;
 }
@@ -8945,7 +8768,7 @@ item::armor_status item::damage_armor_durability( damage_unit &du, const bodypar
     }
 
     // We want armor's own resistance to this type, not the resistance it grants
-    const float armors_own_resist = damage_resist( du.type, true, bp );
+    const float armors_own_resist = resist( du.type, true, bp );
     if( armors_own_resist > 1000.0f ) {
         // This is some weird type that doesn't damage armors
         return armor_status::UNDAMAGED;
@@ -8987,10 +8810,10 @@ item::armor_status item::damage_armor_durability( damage_unit &du, const bodypar
     return armor_status::DAMAGED;
 }
 
-item::armor_status item::damage_armor_transforms( damage_unit &du )
+item::armor_status item::damage_armor_transforms( damage_unit &du ) const
 {
     // We want armor's own resistance to this type, not the resistance it grants
-    const float armors_own_resist = damage_resist( du.type, true, bodypart_id() );
+    const float armors_own_resist = resist( du.type, true );
 
     // to avoid dumb chip damage plates shouldn't ever transform if they take less than
     // 20% of their protection in damage
@@ -9028,9 +8851,9 @@ nc_color item::damage_color() const
         case 1:
             return c_yellow;
         case 2:
-            return c_magenta;
-        case 3:
             return c_light_red;
+        case 3:
+            return c_magenta;
         case 4:
             if( damage() >= max_damage() ) {
                 return c_dark_gray;
@@ -9068,7 +8891,7 @@ std::string item::durability_indicator( bool include_intact ) const
 {
     std::string outputstring;
 
-    if( damage() < 0 )  {
+    if( damage() < 0 ) {
         if( get_option<bool>( "ITEM_HEALTH_BAR" ) ) {
             outputstring = colorize( damage_symbol(), damage_color() ) + degradation_symbol() + "\u00A0";
         } else if( is_gun() ) {
@@ -9102,13 +8925,21 @@ std::string item::durability_indicator( bool include_intact ) const
         }
     }
 
-    return  outputstring;
+    return outputstring;
 }
 
 const std::set<itype_id> &item::repaired_with() const
 {
     static std::set<itype_id> no_repair;
-    return has_flag( flag_NO_REPAIR )  ? no_repair : type->repair;
+    static std::set<itype_id> tools;
+    tools.clear();
+
+    std::copy_if( type->repair.begin(), type->repair.end(), std::inserter( tools, tools.begin() ),
+    []( const itype_id & i ) {
+        return !item_is_blacklisted( i );
+    } );
+
+    return has_flag( flag_NO_REPAIR ) ? no_repair : tools;
 }
 
 void item::mitigate_damage( damage_unit &du, const bodypart_id &bp, int roll ) const
@@ -9125,74 +8956,6 @@ void item::mitigate_damage( damage_unit &du, const sub_bodypart_id &bp, int roll
     const float mitigation = res.get_effective_resist( du );
     du.amount -= mitigation;
     du.amount = std::max( 0.0f, du.amount );
-}
-
-float item::damage_resist( damage_type dt, bool to_self, const bodypart_id &bp, int roll ) const
-{
-    switch( dt ) {
-        case damage_type::NONE:
-        case damage_type::NUM:
-            return 0.0f;
-        case damage_type::PURE:
-            // Items can never be damaged by this type
-            return to_self ? std::numeric_limits<float>::max() : 0.0f;
-        case damage_type::BIOLOGICAL:
-            return biological_resist( to_self, bp, roll );
-        case damage_type::ELECTRIC:
-            return electric_resist( to_self, bp, roll );
-        case damage_type::COLD:
-            return cold_resist( to_self, bp, roll );
-        case damage_type::BASH:
-            return bash_resist( to_self, bp, roll );
-        case damage_type::CUT:
-            return cut_resist( to_self, bp, roll );
-        case damage_type::ACID:
-            return acid_resist( to_self, 0, bp );
-        case damage_type::STAB:
-            return stab_resist( to_self, bp, roll );
-        case damage_type::HEAT:
-            return fire_resist( to_self, 0, bp );
-        case damage_type::BULLET:
-            return bullet_resist( to_self, bp, roll );
-        default:
-            debugmsg( "Invalid damage type: %d", dt );
-    }
-
-    return 0.0f;
-}
-
-float item::damage_resist( damage_type dt, bool to_self, const sub_bodypart_id &bp, int roll ) const
-{
-    switch( dt ) {
-        case damage_type::NONE:
-        case damage_type::NUM:
-            return 0.0f;
-        case damage_type::PURE:
-            // Items can never be damaged by this type
-            return to_self ? std::numeric_limits<float>::max() : 0.0f;
-        case damage_type::BIOLOGICAL:
-            return biological_resist( bp, to_self, roll );
-        case damage_type::ELECTRIC:
-            return electric_resist( bp, to_self, roll );
-        case damage_type::COLD:
-            return cold_resist( bp, to_self, roll );
-        case damage_type::BASH:
-            return bash_resist( bp, to_self, roll );
-        case damage_type::CUT:
-            return cut_resist( bp, to_self, roll );
-        case damage_type::ACID:
-            return acid_resist( bp, to_self );
-        case damage_type::STAB:
-            return stab_resist( bp, to_self, roll );
-        case damage_type::HEAT:
-            return fire_resist( bp, to_self );
-        case damage_type::BULLET:
-            return bullet_resist( bp, to_self, roll );
-        default:
-            debugmsg( "Invalid damage type: %d", dt );
-    }
-
-    return 0.0f;
 }
 
 bool item::is_two_handed( const Character &guy ) const
@@ -9260,11 +9023,6 @@ std::vector<const part_material *> item::armor_made_of( const sub_bodypart_id &b
     return matlist;
 }
 
-const std::map<quality_id, int> &item::quality_of() const
-{
-    return type->qualities;
-}
-
 std::vector<const material_type *> item::made_of_types() const
 {
     std::vector<const material_type *> material_types_composed_of;
@@ -9314,6 +9072,12 @@ int item::made_of( const material_id &mat_ident ) const
         return 0;
     }
     return mat->second;
+}
+
+bool item::can_repair_with( const material_id &mat_ident ) const
+{
+    auto mat = type->repairs_with.find( mat_ident );
+    return mat != type->repairs_with.end();
 }
 
 bool item::made_of( phase_id phase ) const
@@ -9541,6 +9305,11 @@ bool item::is_medication() const
     return get_comestible()->comesttype == "MED";
 }
 
+bool item::is_medical_tool() const
+{
+    return type->get_use( "heal" ) != nullptr;
+}
+
 bool item::is_brewable() const
 {
     return !!type->brewable;
@@ -9552,7 +9321,7 @@ bool item::is_food_container() const
         return food.is_food();
     } ) ) ||
     ( is_craft() && !craft_data_->disassembly &&
-      craft_data_->making->create_result().is_food_container() );
+      craft_data_->making->create_results().front().is_food_container() );
 }
 
 bool item::has_temperature() const
@@ -9594,12 +9363,12 @@ float item::get_latent_heat() const
     return made_of_types()[0]->latent_heat();
 }
 
-float item::get_freeze_point() const
+units::temperature item::get_freeze_point() const
 {
     if( is_comestible() ) {
-        return get_comestible()->freeze_point;
+        return units::from_celsius( get_comestible()->freeze_point );
     }
-    return made_of_types()[0]->freeze_point();
+    return units::from_celsius( made_of_types()[0]->freeze_point() );
 }
 
 void item::set_mtype( const mtype *const m )
@@ -9793,7 +9562,7 @@ bool item::is_fuel() const
         return false;
     }
     // and this material has to produce energy
-    if( get_base_material().get_fuel_data().energy <= 0.0 ) {
+    if( get_base_material().get_fuel_data().energy <= 0_J ) {
         return false;
     }
     // and it needs to be have consumable charges
@@ -9835,7 +9604,7 @@ int item::wind_resist() const
 
     int best = -1;
     for( const material_type *mat : materials ) {
-        cata::optional<int> resistance = mat->wind_resist();
+        std::optional<int> resistance = mat->wind_resist();
         if( resistance && *resistance > best ) {
             best = *resistance;
         }
@@ -9861,9 +9630,10 @@ int item::wheel_area() const
     return is_wheel() ? type->wheel->diameter * type->wheel->width : 0;
 }
 
-float item::fuel_energy() const
+units::energy item::fuel_energy() const
 {
-    return get_base_material().get_fuel_data().energy;
+    // The odd units and division are to avoid integer rounding errors.
+    return get_base_material().get_fuel_data().energy * units::to_milliliter( base_volume() ) / 1000;
 }
 
 std::string item::fuel_pump_terrain() const
@@ -9876,8 +9646,7 @@ bool item::has_explosion_data() const
     return !get_base_material().get_fuel_data().explosion_data.is_empty();
 }
 
-struct fuel_explosion_data item::get_explosion_data()
-{
+struct fuel_explosion_data item::get_explosion_data() const {
     return get_base_material().get_fuel_data().explosion_data;
 }
 
@@ -9898,7 +9667,16 @@ bool item::is_magazine_full() const
 
 bool item::can_unload_liquid() const
 {
+    if( has_flag( flag_NO_UNLOAD ) ) {
+        return false;
+    }
+
     return contents.can_unload_liquid();
+}
+
+bool item::contains_no_solids() const
+{
+    return contents.contains_no_solids();
 }
 
 bool item::allows_speedloader( const itype_id &speedloader_id ) const
@@ -9934,6 +9712,7 @@ bool item::is_salvageable() const
     if( is_null() ) {
         return false;
     }
+    // None of the materials are salvageable or they turn into the original item
     const std::map<material_id, int> &mats = made_of();
     if( std::none_of( mats.begin(), mats.end(), [this]( const std::pair<material_id, int> &m ) {
     return m.first->salvaged_into().has_value() && m.first->salvaged_into().value() != type->get_id();
@@ -9986,6 +9765,11 @@ bool item::is_relic() const
     return !!relic_data;
 }
 
+bool item::is_same_relic( item const &rhs ) const
+{
+    return ( !is_relic() && !rhs.is_relic() ) || *relic_data == *rhs.relic_data;
+}
+
 bool item::has_relic_recharge() const
 {
     return is_relic() && relic_data->has_recharge();
@@ -9996,12 +9780,21 @@ bool item::has_relic_activation() const
     return is_relic() && relic_data->has_activation();
 }
 
-std::vector<enchantment> item::get_enchantments() const
+std::vector<enchant_cache> item::get_proc_enchantments() const
 {
     if( !is_relic() ) {
+        return std::vector<enchant_cache> {};
+    }
+    return relic_data->get_proc_enchantments();
+}
+
+std::vector<enchantment> item::get_defined_enchantments() const
+{
+    if( !is_relic() || !type->relic_data ) {
         return std::vector<enchantment> {};
     }
-    return relic_data->get_enchantments();
+
+    return type->relic_data->get_defined_enchantments();
 }
 
 double item::calculate_by_enchantment( const Character &owner, double modify,
@@ -10009,10 +9802,18 @@ double item::calculate_by_enchantment( const Character &owner, double modify,
 {
     double add_value = 0.0;
     double mult_value = 1.0;
-    for( const enchantment &ench : get_enchantments() ) {
+    for( const enchant_cache &ench : get_proc_enchantments() ) {
         if( ench.is_active( owner, *this ) ) {
             add_value += ench.get_value_add( value );
             mult_value += ench.get_value_multiply( value );
+        }
+    }
+    if( type->relic_data ) {
+        for( const enchantment &ench : type->relic_data->get_defined_enchantments() ) {
+            if( ench.is_active( owner, *this ) ) {
+                add_value += ench.get_value_add( value, owner );
+                mult_value += ench.get_value_multiply( value, owner );
+            }
         }
     }
     modify += add_value;
@@ -10023,15 +9824,24 @@ double item::calculate_by_enchantment( const Character &owner, double modify,
     return modify;
 }
 
-double item::calculate_by_enchantment_wield( double modify, enchant_vals::mod value,
+double item::calculate_by_enchantment_wield( const Character &owner, double modify,
+        enchant_vals::mod value,
         bool round_value ) const
 {
     double add_value = 0.0;
     double mult_value = 1.0;
-    for( const enchantment &ench : get_enchantments() ) {
+    for( const enchant_cache &ench : get_proc_enchantments() ) {
         if( ench.active_wield() ) {
             add_value += ench.get_value_add( value );
             mult_value += ench.get_value_multiply( value );
+        }
+    }
+    if( type->relic_data ) {
+        for( const enchantment &ench : type->relic_data->get_defined_enchantments() ) {
+            if( ench.active_wield() ) {
+                add_value += ench.get_value_add( value, owner );
+                mult_value += ench.get_value_multiply( value, owner );
+            }
         }
     }
     modify += add_value;
@@ -10057,62 +9867,79 @@ units::volume item::max_containable_volume() const
     return contents.max_containable_volume();
 }
 
-ret_val<bool> item::is_compatible( const item &it ) const
+ret_val<void> item::is_compatible( const item &it ) const
 {
     if( this == &it ) {
         // does the set of all sets contain itself?
-        return ret_val<bool>::make_failure();
+        return ret_val<void>::make_failure();
     }
     // disallow putting portable holes into bags of holding
     if( contents.bigger_on_the_inside( volume() ) &&
         it.contents.bigger_on_the_inside( it.volume() ) ) {
-        return ret_val<bool>::make_failure();
+        return ret_val<void>::make_failure();
     }
 
     return contents.is_compatible( it );
 }
 
-ret_val<bool> item::can_contain( const item &it, const bool nested,
-                                 const bool ignore_rigidity, const bool ignore_pkt_settings,
-                                 const item_location &parent_it ) const
+ret_val<void> item::can_contain_directly( const item &it ) const
+{
+    return can_contain( it, false, false, true, item_location(), 10000000_ml, false );
+}
+
+ret_val<void> item::can_contain( const item &it, const bool nested, const bool ignore_rigidity,
+                                 const bool ignore_pkt_settings, const item_location &parent_it,
+                                 units::volume remaining_parent_volume, const bool allow_nested ) const
 {
     if( this == &it || ( parent_it.where() != item_location::type::invalid &&
                          this == parent_it.get_item() ) ) {
         // does the set of all sets contain itself?
         // or does this already contain it?
-        return ret_val<bool>::make_failure();
+        return ret_val<void>::make_failure();
     }
     if( nested && !this->is_container() ) {
-        return ret_val<bool>::make_failure();
+        return ret_val<void>::make_failure();
     }
     // disallow putting portable holes into bags of holding
     if( contents.bigger_on_the_inside( volume() ) &&
         it.contents.bigger_on_the_inside( it.volume() ) ) {
-        return ret_val<bool>::make_failure();
+        return ret_val<void>::make_failure();
     }
-    for( const item_pocket *pkt : contents.get_all_contained_pockets() ) {
-        if( pkt->empty() ) {
-            continue;
-        }
-        // If the current pocket has restrictions or blacklists the item,
-        // try the nested pocket regardless of whether it's soft or rigid.
-        const bool ignore_rigidity =
-            !pkt->settings.accepts_item( it ) ||
-            !pkt->get_pocket_data()->get_flag_restrictions().empty();
-        for( const item *internal_it : pkt->all_items_top() ) {
-            if( parent_it.where() != item_location::type::invalid && internal_it == parent_it.get_item() ) {
+
+    if( allow_nested ) {
+        for( const item_pocket *pkt : contents.get_all_contained_pockets() ) {
+            if( pkt->empty() ) {
                 continue;
             }
-            if( internal_it->can_contain( it, true, ignore_rigidity, ignore_pkt_settings,
-                                          parent_it ).success() ) {
-                return ret_val<bool>::make_success();
+
+            // early exit for max length no nested item is gonna fix this
+            if( pkt->max_containable_length() < it.length() ) {
+                continue;
+            }
+
+            // If the current pocket has restrictions or blacklists the item,
+            // try the nested pocket regardless of whether it's soft or rigid.
+            const bool ignore_nested_rigidity =
+                !pkt->settings.accepts_item( it ) ||
+                !pkt->get_pocket_data()->get_flag_restrictions().empty();
+            for( const item *internal_it : pkt->all_items_top() ) {
+                if( parent_it.where() != item_location::type::invalid && internal_it == parent_it.get_item() ) {
+                    continue;
+                }
+                if( !internal_it->is_container() ) {
+                    continue;
+                }
+                if( internal_it->can_contain( it, true, ignore_nested_rigidity, ignore_pkt_settings,
+                                              parent_it, pkt->remaining_volume() ).success() ) {
+                    return ret_val<void>::make_success();
+                }
             }
         }
     }
 
     return nested && !ignore_rigidity ?
            contents.can_contain_rigid( it, ignore_pkt_settings ) :
-           contents.can_contain( it, ignore_pkt_settings );
+           contents.can_contain( it, ignore_pkt_settings, remaining_parent_volume );
 }
 
 bool item::can_contain( const itype &tp ) const
@@ -10129,12 +9956,20 @@ bool item::can_contain_partial( const item &it ) const
     return can_contain( i_copy ).success();
 }
 
-std::pair<item_location, item_pocket *> item::best_pocket( const item &it, item_location &parent,
+bool item::can_contain_partial_directly( const item &it ) const
+{
+    item i_copy = it;
+    if( i_copy.count_by_charges() ) {
+        i_copy.charges = 1;
+    }
+    return can_contain( i_copy, false, false, true, item_location(), 10000000_ml, false ).success();
+}
+
+std::pair<item_location, item_pocket *> item::best_pocket( const item &it, item_location &this_loc,
         const item *avoid, const bool allow_sealed, const bool ignore_settings,
         const bool nested, bool ignore_rigidity )
 {
-    item_location nested_location( parent, this );
-    return contents.best_pocket( it, nested_location, avoid, allow_sealed, ignore_settings,
+    return contents.best_pocket( it, this_loc, avoid, allow_sealed, ignore_settings,
                                  nested, ignore_rigidity );
 }
 
@@ -10161,7 +9996,6 @@ bool item::spill_contents( const tripoint &pos )
     }
     return contents.spill_contents( pos );
 }
-
 
 bool item::spill_open_pockets( Character &guy, const item *avoid )
 {
@@ -10202,12 +10036,14 @@ int item::get_chapters() const
 
 int item::get_remaining_chapters( const Character &u ) const
 {
+    // NOLINTNEXTLINE(cata-translate-string-literal)
     const std::string var = string_format( "remaining-chapters-%d", u.getID().get_value() );
     return get_var( var, get_chapters() );
 }
 
 void item::mark_chapter_as_read( const Character &u )
 {
+    // NOLINTNEXTLINE(cata-translate-string-literal)
     const std::string var = string_format( "remaining-chapters-%d", u.getID().get_value() );
     if( type->book && type->book->chapters == 0 ) {
         // books without chapters will always have remaining chapters == 0, so we don't need to store them
@@ -10216,6 +10052,32 @@ void item::mark_chapter_as_read( const Character &u )
     }
     const int remain = std::max( 0, get_remaining_chapters( u ) - 1 );
     set_var( var, remain );
+}
+
+std::set<recipe_id> item::get_saved_recipes() const
+{
+    if( is_broken_on_active() ) {
+        return {};
+    }
+    std::set<recipe_id> result;
+    for( const std::string &rid_str : string_split( get_var( "EIPC_RECIPES" ), ',' ) ) {
+        const recipe_id rid( rid_str );
+        if( rid.is_empty() ) {
+            continue;
+        }
+        if( !rid.is_valid() ) {
+            DebugLog( D_WARNING, D_GAME ) << type->get_id().str() <<
+                                          " contained invalid recipe id '" << rid.str() << "'";
+            continue;
+        }
+        result.emplace( rid );
+    }
+    return result;
+}
+
+void item::set_saved_recipes( const std::set<recipe_id> &recipes )
+{
+    set_var( "EIPC_RECIPES", string_join( recipes, "," ) );
 }
 
 std::vector<std::pair<const recipe *, int>> item::get_available_recipes(
@@ -10232,42 +10094,15 @@ std::vector<std::pair<const recipe *, int>> item::get_available_recipes(
                 recipe_entries.emplace_back( elem.recipe, elem.skill_level );
             }
         }
-    } else if( has_var( "EIPC_RECIPES" ) && !is_broken_on_active() ) {
-        // See eipc_recipe_add() in item.cpp where this is set.
-        const std::string recipes = get_var( "EIPC_RECIPES" );
-        // Capture the index one past the delimiter, i.e. start of target string.
-        size_t first_string_index = recipes.find_first_of( ',' ) + 1;
-        while( first_string_index != std::string::npos ) {
-            size_t next_string_index = recipes.find_first_of( ',', first_string_index );
-            if( next_string_index == std::string::npos ) {
-                break;
-            }
-            std::string new_recipe = recipes.substr( first_string_index,
-                                     next_string_index - first_string_index );
-            const recipe *r = &recipe_id( new_recipe ).obj();
+    } else {
+        for( const recipe_id &rid : get_saved_recipes() ) {
+            const recipe *r = &rid.obj();
             if( u.get_knowledge_level( r->skill_used ) >= r->difficulty ) {
                 recipe_entries.emplace_back( r, r->difficulty );
             }
-            first_string_index = next_string_index + 1;
         }
     }
     return recipe_entries;
-}
-
-bool item::eipc_recipe_add( const recipe_id &recipe_id )
-{
-    bool recipe_success = false;
-
-    const std::string old_recipes = this->get_var( "EIPC_RECIPES" );
-    if( old_recipes.empty() ) {
-        recipe_success = true;
-        this->set_var( "EIPC_RECIPES", "," + recipe_id.str() + "," );
-    } else if( old_recipes.find( "," + recipe_id.str() + "," ) == std::string::npos ) {
-        recipe_success = true;
-        this->set_var( "EIPC_RECIPES", old_recipes + recipe_id.str() + "," );
-    }
-
-    return recipe_success;
 }
 
 const material_type &item::get_random_material() const
@@ -10294,6 +10129,9 @@ const material_type &item::get_base_material() const
     }
     // Material portions all equal / not specified. Select first material.
     if( portion == 1 ) {
+        if( is_corpse() ) {
+            return corpse->mat.begin()->first.obj();
+        }
         return *type->default_mat;
     }
     return *m;
@@ -10353,17 +10191,13 @@ skill_id item::melee_skill() const
         return skill_id::NULL_ID();
     }
 
-    if( has_flag( flag_UNARMED_WEAPON ) ) {
-        return skill_unarmed;
-    }
-
     int hi = 0;
     skill_id res = skill_id::NULL_ID();
 
     for( int idx = static_cast<int>( damage_type::NONE ) + 1;
          idx != static_cast<int>( damage_type::NUM ); ++idx ) {
         const int val = damage_melee( static_cast<damage_type>( idx ) );
-        const skill_id &sk  = skill_by_dt( static_cast<damage_type>( idx ) );
+        const skill_id &sk = skill_by_dt( static_cast<damage_type>( idx ) );
         if( val > hi && sk ) {
             hi = val;
             res = sk;
@@ -10372,7 +10206,6 @@ skill_id item::melee_skill() const
 
     return res;
 }
-
 
 int item::min_cycle_recoil() const
 {
@@ -10585,14 +10418,15 @@ int item::ammo_remaining( const Character *carrier ) const
         ret += units::to_kilojoule( carrier->get_power_level() );
     }
 
+    std::set<ammotype> ammo = ammo_types();
     // Non ammo using item that uses charges
-    if( ammo_types().empty() ) {
+    if( ammo.empty() ) {
         ret += charges;
     }
 
     // Extra power from UPS
-    if( carrier != nullptr && ( has_flag( flag_USE_UPS ) || get_gun_ups_drain() ) ) {
-        ret += carrier->available_ups();
+    if( carrier != nullptr && ( has_flag( flag_USE_UPS ) || get_gun_ups_drain() > 0_kJ ) ) {
+        ret += units::to_kilojoule( carrier->available_ups() );
     }
 
     // Magazines and integral magazines on their own
@@ -10605,9 +10439,11 @@ int item::ammo_remaining( const Character *carrier ) const
     }
 
     // Handle non-magazines with ammo_restriction in a CONTAINER type pocket (like quivers)
-    if( !ammo_types().empty() ) {
+    if( !( mag || is_magazine() || ammo.empty() ) ) {
         for( const item *e : contents.all_items_top( item_pocket::pocket_type::CONTAINER ) ) {
-            ret += e->charges;
+            if( e->is_ammo() && ammo.find( e->ammo_type() ) != ammo.end() ) {
+                ret += e->charges;
+            }
         }
     }
     return ret;
@@ -10647,10 +10483,6 @@ int item::ammo_capacity( const ammotype &ammo ) const
 
 int item::ammo_required() const
 {
-    if( is_tool() ) {
-        return std::max( type->charges_to_use(), 0 );
-    }
-
     if( is_gun() ) {
         if( type->gun->ammo.empty() ) {
             return 0;
@@ -10665,7 +10497,7 @@ int item::ammo_required() const
         }
     }
 
-    return 0;
+    return type->charges_to_use();
 }
 
 item &item::first_ammo()
@@ -10687,8 +10519,8 @@ bool item::ammo_sufficient( const Character *carrier, int qty ) const
 {
     if( ammo_required() ) {
         return ammo_remaining( carrier ) >= ammo_required() * qty;
-    } else if( get_gun_ups_drain() ) {
-        return ammo_remaining( carrier ) >= get_gun_ups_drain() * qty;
+    } else if( get_gun_ups_drain() > 0_kJ ) {
+        return carrier->available_ups() >= get_gun_ups_drain() * qty;
     } else if( count_by_charges() ) {
         return ammo_remaining( carrier ) >= qty;
     }
@@ -10703,8 +10535,8 @@ bool item::ammo_sufficient( const Character *carrier, const std::string &method,
     }
     if( ammo_required() ) {
         return ammo_remaining( carrier ) >= ammo_required() * qty;
-    } else if( get_gun_ups_drain() ) {
-        return ammo_remaining( carrier ) >= get_gun_ups_drain() * qty;
+    } else if( get_gun_ups_drain() > 0_kJ ) {
+        return carrier->available_ups() >= get_gun_ups_drain() * qty;
     }
     return true;
 }
@@ -10722,6 +10554,13 @@ int item::ammo_consume( int qty, const tripoint &pos, Character *carrier )
         qty -= contents.ammo_consume( qty, pos );
     }
 
+    // Dirty fix: activating a container of meds leads here, and used to use up all of the charges.
+    if( is_medication() && charges > 1 ) {
+        int charg_used = std::min( charges, qty );
+        charges -= charg_used;
+        qty -= charg_used;
+    }
+
     // Some weird internal non-item charges (used by grenades)
     if( is_tool() && type->tool->ammo_id.empty() ) {
         int charg_used = std::min( charges, qty );
@@ -10731,7 +10570,8 @@ int item::ammo_consume( int qty, const tripoint &pos, Character *carrier )
 
     // Consume UPS power from various sources
     if( carrier != nullptr && has_flag( flag_USE_UPS ) ) {
-        qty -= carrier->consume_ups( qty );
+        units::energy energy_draw = units::from_kilojoule( qty );
+        qty -= units::to_kilojoule( carrier->consume_ups( energy_draw ) );
     }
 
     // Consume bio pwr directly
@@ -10743,6 +10583,11 @@ int item::ammo_consume( int qty, const tripoint &pos, Character *carrier )
     }
 
     return wanted_qty - qty;
+}
+
+int item::activation_consume( int qty, const tripoint &pos, Character *carrier )
+{
+    return ammo_consume( qty * ammo_required(), pos, carrier );
 }
 
 const itype *item::ammo_data() const
@@ -10768,7 +10613,7 @@ const itype *item::ammo_data() const
         }
     }
 
-    if( is_gun() && ammo_remaining() != 0 ) {
+    if( is_gun() && ammo_remaining() > 0 ) {
         return contents.first_ammo().ammo_data();
     }
     return nullptr;
@@ -10850,16 +10695,44 @@ itype_id item::ammo_default( bool conversion ) const
     return itype_id::NULL_ID();
 }
 
+std::string item::print_ammo( ammotype at ) const
+{
+    const item *mag = magazine_current();
+    if( mag ) {
+        return mag->print_ammo( at );
+    } else if( has_flag( flag_USES_BIONIC_POWER ) ) {
+        return _( "energy" );
+    }
+
+    if( type->magazine ) {
+        return enumerate_as_string( type->magazine->cached_ammos[at].begin(),
+        type->magazine->cached_ammos[at].end(), []( const itype_id & id ) {
+
+            return string_format( "<info>%s</info>", id->nname( 1 ) );
+        } );
+    }
+
+    if( type->gun ) {
+        return enumerate_as_string( type->gun->cached_ammos[at].begin(),
+        type->gun->cached_ammos[at].end(), []( const itype_id & id ) {
+
+            return string_format( "<info>%s</info>", id->nname( 1 ) );
+        } );
+    }
+
+    return "";
+
+
+}
+
 itype_id item::common_ammo_default( bool conversion ) const
 {
-    if( !ammo_types( conversion ).empty() ) {
-        for( const ammotype &at : ammo_types( conversion ) ) {
-            const item *mag = magazine_current();
-            if( mag && mag->type->magazine->type.count( at ) ) {
-                itype_id res = at->default_ammotype();
-                if( !res.is_empty() ) {
-                    return res;
-                }
+    for( const ammotype &at : ammo_types( conversion ) ) {
+        const item *mag = magazine_current();
+        if( mag && mag->type->magazine->type.count( at ) ) {
+            itype_id res = at->default_ammotype();
+            if( !res.is_empty() ) {
+                return res;
             }
         }
     }
@@ -10988,41 +10861,41 @@ item *item::gunmod_find_by_flag( const flag_id &flag )
     return it != mods.end() ? *it : nullptr;
 }
 
-ret_val<bool> item::is_gunmod_compatible( const item &mod ) const
+ret_val<void> item::is_gunmod_compatible( const item &mod ) const
 {
     if( !mod.is_gunmod() ) {
         debugmsg( "Tried checking compatibility of non-gunmod" );
-        return ret_val<bool>::make_failure();
+        return ret_val<void>::make_failure();
     }
     static const gun_type_type pistol_gun_type( translate_marker_context( "gun_type_type", "pistol" ) );
 
     if( !is_gun() ) {
-        return ret_val<bool>::make_failure( _( "isn't a weapon" ) );
+        return ret_val<void>::make_failure( _( "isn't a weapon" ) );
 
     } else if( is_gunmod() ) {
-        return ret_val<bool>::make_failure( _( "is a gunmod and cannot be modded" ) );
+        return ret_val<void>::make_failure( _( "is a gunmod and cannot be modded" ) );
 
     } else if( gunmod_find( mod.typeId() ) ) {
-        return ret_val<bool>::make_failure( _( "already has a %s" ), mod.tname( 1 ) );
+        return ret_val<void>::make_failure( _( "already has a %s" ), mod.tname( 1 ) );
 
     } else if( !get_mod_locations().count( mod.type->gunmod->location ) ) {
-        return ret_val<bool>::make_failure( _( "doesn't have a slot for this mod" ) );
+        return ret_val<void>::make_failure( _( "doesn't have a slot for this mod" ) );
 
     } else if( get_free_mod_locations( mod.type->gunmod->location ) <= 0 ) {
-        return ret_val<bool>::make_failure( _( "doesn't have enough room for another %s mod" ),
+        return ret_val<void>::make_failure( _( "doesn't have enough room for another %s mod" ),
                                             mod.type->gunmod->location.name() );
 
     } else if( !mod.type->gunmod->usable.count( gun_type() ) &&
                !mod.type->gunmod->usable.count( gun_type_type( typeId().str() ) ) ) {
-        return ret_val<bool>::make_failure( _( "cannot have a %s" ), mod.tname() );
+        return ret_val<void>::make_failure( _( "cannot have a %s" ), mod.tname() );
 
     } else if( typeId() == itype_hand_crossbow &&
                !mod.type->gunmod->usable.count( pistol_gun_type ) ) {
-        return ret_val<bool>::make_failure( _( "isn't big enough to use that mod" ) );
+        return ret_val<void>::make_failure( _( "isn't big enough to use that mod" ) );
 
     } else if( mod.type->gunmod->location.str() == "underbarrel" &&
                !mod.has_flag( flag_PUMP_RAIL_COMPATIBLE ) && has_flag( flag_PUMP_ACTION ) ) {
-        return ret_val<bool>::make_failure( _( "can only accept small mods on that slot" ) );
+        return ret_val<void>::make_failure( _( "can only accept small mods on that slot" ) );
 
     } else if( !mod.type->mod->acceptable_ammo.empty() ) {
         bool compat_ammo = false;
@@ -11032,32 +10905,36 @@ ret_val<bool> item::is_gunmod_compatible( const item &mod ) const
             }
         }
         if( !compat_ammo ) {
-            return ret_val<bool>::make_failure(
+            return ret_val<void>::make_failure(
                        _( "%1$s cannot be used on item with no compatible ammo types" ), mod.tname( 1 ) );
         }
     } else if( mod.typeId() == itype_waterproof_gunmod && has_flag( flag_WATERPROOF_GUN ) ) {
-        return ret_val<bool>::make_failure( _( "is already waterproof" ) );
+        return ret_val<void>::make_failure( _( "is already waterproof" ) );
 
     } else if( mod.typeId() == itype_tuned_mechanism && has_flag( flag_NEVER_JAMS ) ) {
-        return ret_val<bool>::make_failure( _( "is already eminently reliable" ) );
+        return ret_val<void>::make_failure( _( "is already eminently reliable" ) );
 
     } else if( mod.typeId() == itype_brass_catcher && has_flag( flag_RELOAD_EJECT ) ) {
-        return ret_val<bool>::make_failure( _( "cannot have a brass catcher" ) );
+        return ret_val<void>::make_failure( _( "cannot have a brass catcher" ) );
 
     } else if( ( mod.type->gunmod->location.name() == "magazine" ||
                  mod.type->gunmod->location.name() == "mechanism" ) &&
                ( ammo_remaining() > 0 || magazine_current() ) ) {
-        return ret_val<bool>::make_failure( _( "must be unloaded before installing this mod" ) );
+        return ret_val<void>::make_failure( _( "must be unloaded before installing this mod" ) );
+
+    } else if( gunmod_find( itype_stock_none ) &&
+               mod.type->gunmod->location.name() == "stock accessory" ) {
+        return ret_val<void>::make_failure( _( "doesn't have a stock to attach this mod" ) );
     }
 
     for( const gunmod_location &slot : mod.type->gunmod->blacklist_mod ) {
         if( get_mod_locations().count( slot ) ) {
-            return ret_val<bool>::make_failure( _( "cannot be installed on a weapon with \"%s\"" ),
+            return ret_val<void>::make_failure( _( "cannot be installed on a weapon with \"%s\"" ),
                                                 slot.name() );
         }
     }
 
-    return ret_val<bool>::make_success();
+    return ret_val<void>::make_success();
 }
 
 std::map<gun_mode_id, gun_mode> item::gun_all_modes() const
@@ -11188,10 +11065,11 @@ const use_function *item::get_use_internal( const std::string &use_name ) const
     return nullptr;
 }
 
-item *item::get_usable_item( const std::string &use_name )
+template<typename Item>
+Item *item::get_usable_item_helper( Item &self, const std::string &use_name )
 {
-    item *ret = nullptr;
-    visit_items(
+    Item *ret = nullptr;
+    self.visit_items(
     [&ret, &use_name]( item * it, auto ) {
         if( it == nullptr ) {
             return VisitResponse::SKIP;
@@ -11206,13 +11084,23 @@ item *item::get_usable_item( const std::string &use_name )
     return ret;
 }
 
+const item *item::get_usable_item( const std::string &use_name ) const
+{
+    return get_usable_item_helper( *this, use_name );
+}
+
+item *item::get_usable_item( const std::string &use_name )
+{
+    return get_usable_item_helper( *this, use_name );
+}
+
 item::reload_option::reload_option( const reload_option & ) = default;
 
 item::reload_option &item::reload_option::operator=( const reload_option & ) = default;
 
-item::reload_option::reload_option( const Character *who, const item *target, const item *parent,
+item::reload_option::reload_option( const Character *who, const item_location &target,
                                     const item_location &ammo ) :
-    who( who ), target( target ), ammo( ammo ), parent( parent )
+    who( who ), target( target ), ammo( ammo )
 {
     if( this->target->is_ammo_belt() && this->target->type->magazine->linkage ) {
         max_qty = this->who->charges_of( * this->target->type->magazine->linkage );
@@ -11223,7 +11111,8 @@ item::reload_option::reload_option( const Character *who, const item *target, co
 int item::reload_option::moves() const
 {
     int mv = ammo.obtain_cost( *who, qty() ) + who->item_reload_cost( *target, *ammo, qty() );
-    if( parent != target ) {
+    if( target.has_parent() ) {
+        item_location parent = target.parent_item();
         if( parent->is_gun() && !target->is_gunmod() ) {
             mv += parent->get_reload_time() * 1.5;
         } else if( parent->is_tool() ) {
@@ -11252,7 +11141,8 @@ void item::reload_option::qty( int val )
     int remaining_capacity = target->is_watertight_container() ?
                              target->get_remaining_capacity_for_liquid( ammo_obj, true ) :
                              target->remaining_ammo_capacity();
-    if( target->has_flag( flag_RELOAD_ONE ) && !ammo->has_flag( flag_SPEEDLOADER ) ) {
+    if( target->has_flag( flag_RELOAD_ONE ) &&
+        !( ammo->has_flag( flag_SPEEDLOADER ) || ammo->has_flag( flag_SPEEDLOADER_CLIP ) ) ) {
         remaining_capacity = 1;
     }
     if( ammo_obj.type->ammo ) {
@@ -11264,7 +11154,7 @@ void item::reload_option::qty( int val )
 
     bool ammo_by_charges = ammo_obj.is_ammo() || ammo_in_liquid_container;
     int available_ammo;
-    if( ammo->has_flag( flag_SPEEDLOADER ) ) {
+    if( ammo->has_flag( flag_SPEEDLOADER ) || ammo->has_flag( flag_SPEEDLOADER_CLIP ) ) {
         available_ammo = ammo_obj.ammo_remaining();
     } else {
         available_ammo = ammo_by_charges ? ammo_obj.charges : ammo_obj.count();
@@ -11276,10 +11166,6 @@ void item::reload_option::qty( int val )
     // always expect to reload at least one charge
     qty_ = std::max( qty_, 1 );
 
-}
-const item *item::reload_option::getParent() const
-{
-    return parent;
 }
 
 int item::casings_count() const
@@ -11296,7 +11182,7 @@ int item::casings_count() const
 
 void item::casings_handle( const std::function<bool( item & )> &func )
 {
-    if( !is_gun() ) {
+    if( !is_gun() && !is_tool() ) {
         return;
     }
     contents.casings_handle( func );
@@ -11319,7 +11205,7 @@ bool item::reload( Character &u, item_location ammo, int qty )
     }
 
     bool ammo_from_map = !ammo.held_by( u );
-    if( ammo->has_flag( flag_SPEEDLOADER ) ) {
+    if( ammo->has_flag( flag_SPEEDLOADER ) || ammo->has_flag( flag_SPEEDLOADER_CLIP ) ) {
         // if the thing passed in is a speed loader, we want the ammo
         ammo = item_location( ammo, &ammo->first_ammo() );
     }
@@ -11567,12 +11453,16 @@ bool item::getlight( float &luminance, units::angle &width, units::angle &direct
 int item::getlight_emit() const
 {
     float lumint = type->light_emission;
-    if( ammo_required() == 0 ||
-        ( has_flag( flag_USE_UPS ) && ammo_capacity( ammo_battery ) == 0 ) ||
+
+    if( lumint == 0 ) {
+        return 0;
+    }
+
+    if( ammo_required() == 0 || ( has_flag( flag_USE_UPS ) && ammo_capacity( ammo_battery ) == 0 ) ||
         has_flag( flag_USES_BIONIC_POWER ) ) {
         return lumint;
     }
-    if( lumint == 0 || ammo_remaining() == 0 ) {
+    if( ammo_remaining() == 0 ) {
         return 0;
     }
     if( has_flag( flag_CHARGEDIM ) && is_tool() && !has_flag( flag_USE_UPS ) ) {
@@ -11603,7 +11493,6 @@ units::mass item::get_remaining_weight_capacity( const bool unrestricted_pockets
 {
     return contents.remaining_container_capacity_weight( unrestricted_pockets_only );
 }
-
 
 units::volume item::get_total_contained_volume( const bool unrestricted_pockets_only ) const
 {
@@ -11665,7 +11554,8 @@ int item::get_remaining_capacity_for_liquid( const item &liquid, bool allow_buck
 int item::get_remaining_capacity_for_liquid( const item &liquid, const Character &p,
         std::string *err ) const
 {
-    const bool allow_bucket = this == &p.get_wielded_item() || !p.has_item( *this );
+    const bool allow_bucket = ( p.get_wielded_item() && this == &*p.get_wielded_item() ) ||
+                              !p.has_item( *this );
     int res = get_remaining_capacity_for_liquid( liquid, allow_bucket, err );
 
     if( res > 0 ) {
@@ -11709,6 +11599,7 @@ bool item::use_amount( const itype_id &it, int &quantity, std::list<item> &used,
     return use_amount_internal( it, quantity, used, filter );
 }
 
+// NOLINTNEXTLINE(readability-make-member-function-const)
 bool item::use_amount_internal( const itype_id &it, int &quantity, std::list<item> &used,
                                 const std::function<bool( const item & )> &filter )
 {
@@ -11754,85 +11645,89 @@ bool item::allow_crafting_component() const
     return true;
 }
 
-void item::set_item_specific_energy( const float new_specific_energy )
+void item::set_item_specific_energy( const units::specific_energy &new_specific_energy )
 {
+    const float float_new_specific_energy = units::to_joule_per_gram( new_specific_energy );
     const float specific_heat_liquid = get_specific_heat_liquid(); // J/g K
     const float specific_heat_solid = get_specific_heat_solid(); // J/g K
-    const float latent_heat = get_latent_heat(); // J/kg
-    const float freezing_temperature = celsius_to_kelvin( get_freeze_point() );  // K
-    const float completely_frozen_specific_energy = specific_heat_solid *
-            freezing_temperature;  // Energy that the item would have if it was completely solid at freezing temperature
-    const float completely_liquid_specific_energy = completely_frozen_specific_energy +
-            latent_heat; // Energy that the item would have if it was completely liquid at freezing temperature
-    float new_item_temperature = 0.0f;
+    const float latent_heat = get_latent_heat(); // J/g
+    const float freezing_temperature = units::to_kelvin( get_freeze_point() );
+    // Energy that the item would have if it was completely solid at freezing temperature
+    const float completely_frozen_specific_energy = specific_heat_solid * freezing_temperature; // J/g
+    // Energy that the item would have if it was completely liquid at freezing temperature
+    const float completely_liquid_specific_energy = completely_frozen_specific_energy + latent_heat;
+    float new_item_temperature = 0.0f; // K
     float freeze_percentage = 1.0f;
 
-    if( new_specific_energy > completely_liquid_specific_energy ) {
+    if( float_new_specific_energy > completely_liquid_specific_energy ) {
         // Item is liquid
-        new_item_temperature = freezing_temperature + ( new_specific_energy -
+        new_item_temperature = freezing_temperature + ( float_new_specific_energy -
                                completely_liquid_specific_energy ) /
                                specific_heat_liquid;
         freeze_percentage = 0.0f;
-    } else if( new_specific_energy < completely_frozen_specific_energy ) {
+    } else if( float_new_specific_energy < completely_frozen_specific_energy ) {
         // Item is solid
-        new_item_temperature = new_specific_energy / specific_heat_solid;
+        new_item_temperature = float_new_specific_energy / specific_heat_solid;
     } else {
         // Item is partially solid
         new_item_temperature = freezing_temperature;
-        freeze_percentage = ( completely_liquid_specific_energy - new_specific_energy ) /
+        freeze_percentage = ( completely_liquid_specific_energy - float_new_specific_energy ) /
                             ( completely_liquid_specific_energy - completely_frozen_specific_energy );
     }
 
-    temperature = std::lround( 100000 * new_item_temperature );
-    specific_energy = std::lround( 100000 * new_specific_energy );
-    set_temp_flags( new_item_temperature, freeze_percentage );
+    temperature = units::from_kelvin( new_item_temperature );
+    specific_energy = new_specific_energy;
+    set_temp_flags( temperature, freeze_percentage );
     reset_temp_check();
 }
 
-float item::get_specific_energy_from_temperature( const float new_temperature )
+units::specific_energy item::get_specific_energy_from_temperature( const units::temperature
+        &new_temperature ) const
 {
     const float specific_heat_liquid = get_specific_heat_liquid(); // J/g K
     const float specific_heat_solid = get_specific_heat_solid(); // J/g K
-    const float latent_heat = get_latent_heat(); // J/kg
-    const float freezing_temperature = celsius_to_kelvin( get_freeze_point() );  // K
-    const float completely_frozen_energy = specific_heat_solid *
-                                           freezing_temperature;  // Energy that the item would have if it was completely solid at freezing temperature
-    const float completely_liquid_energy = completely_frozen_energy +
-                                           latent_heat; // Energy that the item would have if it was completely liquid at freezing temperature
+    const float latent_heat = get_latent_heat(); // J/g
+    const float freezing_temperature = units::to_kelvin( get_freeze_point() );
+    // Energy that the item would have if it was completely solid at freezing temperature
+    const float completely_frozen_energy = specific_heat_solid * freezing_temperature;
+    // Energy that the item would have if it was completely liquid at freezing temperature
+    const float completely_liquid_energy = completely_frozen_energy + latent_heat;
     float new_specific_energy;
 
-    if( new_temperature <= freezing_temperature ) {
-        new_specific_energy = specific_heat_solid * new_temperature;
+    if( units::to_kelvin( new_temperature ) <= freezing_temperature ) {
+        new_specific_energy = specific_heat_solid * units::to_kelvin( new_temperature );
     } else {
         new_specific_energy = completely_liquid_energy + specific_heat_liquid *
-                              ( new_temperature - freezing_temperature );
+                              ( units::to_kelvin( new_temperature ) - freezing_temperature );
     }
-    return new_specific_energy;
+    return units::from_joule_per_gram( new_specific_energy );
 }
 
-void item::set_item_temperature( float new_temperature )
+void item::set_item_temperature( units::temperature new_temperature )
 {
-    const float freezing_temperature = celsius_to_kelvin( get_freeze_point() );  // K
+    const float freezing_temperature = units::to_kelvin( get_freeze_point() );
     const float specific_heat_solid = get_specific_heat_solid(); // J/g K
-    const float latent_heat = get_latent_heat(); // J/kg
+    const float latent_heat = get_latent_heat(); // J/g
 
-    float new_specific_energy = get_specific_energy_from_temperature( new_temperature );
+    units::specific_energy new_specific_energy = get_specific_energy_from_temperature(
+                new_temperature );
     float freeze_percentage = 0.0f;
 
-    temperature = std::lround( 100000 * new_temperature );
-    specific_energy = std::lround( 100000 * new_specific_energy );
+    temperature = new_temperature;
+    specific_energy = new_specific_energy ;
 
-    const float completely_frozen_specific_energy = specific_heat_solid *
-            freezing_temperature;  // Energy that the item would have if it was completely solid at freezing temperature
-    const float completely_liquid_specific_energy = completely_frozen_specific_energy +
-            latent_heat; // Energy that the item would have if it was completely liquid at freezing temperature
+    // Energy that the item would have if it was completely solid at freezing temperature
+    const float completely_frozen_specific_energy = specific_heat_solid * freezing_temperature;
+    // Energy that the item would have if it was completely liquid at freezing temperature
+    const float completely_liquid_specific_energy = completely_frozen_specific_energy + latent_heat;
 
-    if( new_specific_energy < completely_frozen_specific_energy ) {
+    if( units::to_joule_per_gram( new_specific_energy ) < completely_frozen_specific_energy ) {
         // Item is solid
         freeze_percentage = 1;
     } else {
         // Item is partially solid
-        freeze_percentage = ( completely_liquid_specific_energy - new_specific_energy ) /
+        freeze_percentage = ( completely_liquid_specific_energy - units::to_joule_per_gram(
+                                  new_specific_energy ) ) /
                             ( completely_liquid_specific_energy - completely_frozen_specific_energy );
     }
     set_temp_flags( new_temperature, freeze_percentage );
@@ -12013,8 +11908,8 @@ const item_category &item::get_category_shallow() const
 
 const item_category &item::get_category_of_contents() const
 {
-    if( type->category_force == item_category_container && contents.num_item_stacks() == 1 ) {
-        return contents.only_item().get_category_of_contents();
+    if( type->category_force == item_category_container && contents_only_one_type() ) {
+        return contents.first_item().get_category_of_contents();
     } else {
         return this->get_category_shallow();
     }
@@ -12106,20 +12001,23 @@ bool item::will_explode_in_fire() const
 
 bool item::detonate( const tripoint &p, std::vector<item> &drops )
 {
+    const Creature *source = get_player_character().get_faction()->id == owner
+                             ? &get_player_character()
+                             : nullptr;
     if( type->explosion.power >= 0 ) {
-        explosion_handler::explosion( p, type->explosion );
+        explosion_handler::explosion( source, p, type->explosion );
         return true;
     } else if( type->ammo && ( type->ammo->special_cookoff || type->ammo->cookoff ) ) {
         int charges_remaining = charges;
         const int rounds_exploded = rng( 1, charges_remaining / 2 );
         if( type->ammo->special_cookoff ) {
             // If it has a special effect just trigger it.
-            apply_ammo_effects( p, type->ammo->ammo_effects );
+            apply_ammo_effects( nullptr, p, type->ammo->ammo_effects );
         }
         if( type->ammo->cookoff ) {
             // If ammo type can burn, then create an explosion proportional to quantity.
             float power = 3.0f * std::pow( rounds_exploded / 25.0f, 0.25f );
-            explosion_handler::explosion( p, power, 0.0f, false, 0 );
+            explosion_handler::explosion( nullptr, p, power, 0.0f, false, 0 );
         }
         charges_remaining -= rounds_exploded;
         if( charges_remaining > 0 ) {
@@ -12208,10 +12106,12 @@ std::string item::components_to_string() const
 {
     using t_count_map = std::map<std::string, int>;
     t_count_map counts;
-    for( const item &elem : components ) {
-        if( !elem.has_flag( flag_BYPRODUCT ) ) {
-            const std::string name = elem.display_name();
-            counts[name]++;
+    for( const item_components::type_vector_pair &tvp : components ) {
+        for( const item &it : tvp.second ) {
+            if( !it.has_flag( flag_BYPRODUCT ) ) {
+                const std::string name = it.display_name();
+                counts[name]++;
+            }
         }
     }
     return enumerate_as_string( counts.begin(), counts.end(),
@@ -12228,15 +12128,11 @@ std::string item::components_to_string() const
 
 uint64_t item::make_component_hash() const
 {
-    // First we need to sort the IDs so that identical ingredients give identical hashes.
-    std::multiset<std::string> id_set;
-    for( const item &it : components ) {
-        id_set.insert( it.typeId().str() );
-    }
-
     std::string concatenated_ids;
-    for( const std::string &id : id_set ) {
-        concatenated_ids += id;
+    for( const item_components::type_vector_pair &tvp : components ) {
+        for( size_t i = 0; i < tvp.second.size(); ++i ) {
+            concatenated_ids += tvp.first.str();
+        }
     }
 
     std::hash<std::string> hasher;
@@ -12245,16 +12141,7 @@ uint64_t item::make_component_hash() const
 
 bool item::needs_processing() const
 {
-    bool need_process = false;
-    visit_items( [&need_process]( const item * it, item * ) {
-        if( it->active || it->ethereal || it->wetness || it->has_flag( flag_RADIO_ACTIVATION ) ||
-            it->has_relic_recharge() ) {
-            need_process = true;
-            return VisitResponse::ABORT;
-        }
-        return VisitResponse::NEXT;
-    } );
-    return need_process;
+    return processing_speed() != NO_PROCESSING;
 }
 
 int item::processing_speed() const
@@ -12268,14 +12155,7 @@ int item::processing_speed() const
         return 1;
     }
 
-    // This item doesn't actually need processing.
-    // Either it contains items that need processing. Use processing speed from those.
-    // Or it is in same container with items that need processing.
-    int processing_speed = 10000;
-    for( const item *it : contents.all_items_top( item_pocket::pocket_type::CONTAINER ) ) {
-        processing_speed = std::min( processing_speed, it->processing_speed() );
-    }
-    return processing_speed;
+    return item::NO_PROCESSING;
 }
 
 void item::apply_freezerburn()
@@ -12301,11 +12181,11 @@ bool item::process_temperature_rot( float insulation, const tripoint &pos, map &
     // process temperature and rot at most once every 100_turns (10 min)
     // note we're also gated by item::processing_speed
     time_duration smallest_interval = 10_minutes;
-    if( now - last_temp_check < smallest_interval && specific_energy > 0 ) {
+    if( now - last_temp_check < smallest_interval && units::to_joule_per_gram( specific_energy ) > 0 ) {
         return false;
     }
 
-    int temp = get_weather().get_temperature( pos );
+    units::temperature temp = get_weather().get_temperature( pos );
 
     switch( flag ) {
         case temperature_flag::NORMAL:
@@ -12328,10 +12208,10 @@ bool item::process_temperature_rot( float insulation, const tripoint &pos, map &
     }
 
     bool carried = carrier != nullptr && carrier->has_item( *this );
-    // body heat increases inventory temperature by 5F and insulation by 50%
+    // body heat increases inventory temperature by 5 F (2.77 K) and insulation by 50%
     if( carried ) {
         insulation *= 1.5;
-        temp += 5;
+        temp += units::from_kelvin( 2.77 );
     }
 
     time_point time = last_temp_check;
@@ -12343,19 +12223,19 @@ bool item::process_temperature_rot( float insulation, const tripoint &pos, map &
 
         const weather_generator &wgen = get_weather().get_cur_weather_gen();
         const unsigned int seed = g->get_seed();
-        int local_mod = g->new_game ? 0 : here.get_temperature( pos );
+        units::temperature local_mod = g->new_game ? 0_K : here.get_temperature_mod( pos );
 
-        int enviroment_mod;
+        units::temperature enviroment_mod;
         // Toilets and vending machines will try to get the heat radiation and convection during mapgen and segfault.
         if( !g->new_game ) {
-            enviroment_mod = get_heat_radiation( pos, false );
+            enviroment_mod = get_heat_radiation( pos );
             enviroment_mod += get_convection_temperature( pos );
         } else {
-            enviroment_mod = 0;
+            enviroment_mod = 0_K;
         }
 
         if( carried ) {
-            local_mod += 5; // body heat increases inventory temperature
+            local_mod += units::from_kelvin( 2.77 ); // body heat increases inventory temperature
         }
 
         // Process the past of this item in 1h chunks until there is less than 1h left.
@@ -12366,26 +12246,27 @@ bool item::process_temperature_rot( float insulation, const tripoint &pos, map &
 
             // Get the environment temperature
             // Use weather if above ground, use map temp if below
-            double env_temperature = 0;
+            units::temperature env_temperature;
             if( pos.z >= 0 && flag != temperature_flag::ROOT_CELLAR ) {
-                double weather_temperature = wgen.get_weather_temperature( pos, time, seed );
-                env_temperature = weather_temperature + enviroment_mod + local_mod;
+                env_temperature = wgen.get_weather_temperature( pos, time, seed );
             } else {
-                env_temperature = AVERAGE_ANNUAL_TEMPERATURE + enviroment_mod + local_mod;
+                env_temperature = AVERAGE_ANNUAL_TEMPERATURE;
             }
+            env_temperature += local_mod;
+            env_temperature += enviroment_mod;
 
             switch( flag ) {
                 case temperature_flag::NORMAL:
                     // Just use the temperature normally
                     break;
                 case temperature_flag::FRIDGE:
-                    env_temperature = std::min( env_temperature, static_cast<double>( temperatures::fridge ) );
+                    env_temperature = std::min( env_temperature, temperatures::fridge );
                     break;
                 case temperature_flag::FREEZER:
-                    env_temperature = std::min( env_temperature, static_cast<double>( temperatures::freezer ) );
+                    env_temperature = std::min( env_temperature, temperatures::freezer );
                     break;
                 case temperature_flag::HEATER:
-                    env_temperature = std::max( env_temperature, static_cast<double>( temperatures::normal ) );
+                    env_temperature = std::max( env_temperature, temperatures::normal );
                     break;
                 case temperature_flag::ROOT_CELLAR:
                     env_temperature = AVERAGE_ANNUAL_TEMPERATURE;
@@ -12425,43 +12306,45 @@ bool item::process_temperature_rot( float insulation, const tripoint &pos, map &
     }
 
     // Just now created items will get here.
-    if( specific_energy < 0 ) {
-        set_item_temperature( temp_to_kelvin( temp ) );
+    if( units::to_joule_per_gram( specific_energy ) < 0 ) {
+        set_item_temperature( temp );
     }
     return false;
 }
 
-void item::calc_temp( const int temp, const float insulation, const time_duration &time_delta )
+void item::calc_temp( const units::temperature &temp, const float insulation,
+                      const time_duration &time_delta )
 {
-    // Limit calculations to max 4000 C (4273.15 K) to avoid specific energy from overflowing
-    const float env_temperature = std::min( temp_to_kelvin( temp ), 4273.15 );
-    const float old_temperature = 0.00001 * temperature;
+    const float env_temperature = units::to_kelvin( temp ); // K
+    const float old_temperature = units::to_kelvin( temperature ); // K
     const float temperature_difference = env_temperature - old_temperature;
 
     // If no or only small temperature difference then no need to do math.
-    if( std::abs( temperature_difference ) < 0.9 ) {
+    if( std::abs( temperature_difference ) < 0.4 ) {
         return;
     }
     const float mass = to_gram( weight() ); // g
 
     // If item has negative energy set to environment temperature (it not been processed ever)
-    if( specific_energy < 0 ) {
-        set_item_temperature( env_temperature );
+    if( units::to_joule_per_gram( specific_energy ) < 0 ) {
+        set_item_temperature( temp );
         return;
     }
 
-    // specific_energy = item thermal energy (10e-5 J/g). Stored in the item
-    // temperature = item temperature (10e-5 K). Stored in the item
+    // specific_energy = item thermal energy (J/g). Stored in the item
+    // temperature = item temperature (K). Stored in the item
     const float conductivity_term = 0.0076 * std::pow( to_milliliter( volume() ),
                                     2.0 / 3.0 ) / insulation;
     const float specific_heat_liquid = get_specific_heat_liquid();
     const float specific_heat_solid = get_specific_heat_solid();
     const float latent_heat = get_latent_heat();
-    const float freezing_temperature = celsius_to_kelvin( get_freeze_point() );  // K
-    const float completely_frozen_specific_energy = specific_heat_solid *
-            freezing_temperature;  // Energy that the item would have if it was completely solid at freezing temperature
-    const float completely_liquid_specific_energy = completely_frozen_specific_energy +
-            latent_heat; // Energy that the item would have if it was completely liquid at freezing temperature
+    const float freezing_temperature = units::to_kelvin( get_freeze_point() );
+    // Energy that the item would have if it was completely solid at freezing temperature
+    const units::specific_energy completely_frozen_specific_energy = units::from_joule_per_gram(
+                specific_heat_solid * freezing_temperature );
+    // Energy that the item would have if it was completely liquid at freezing temperature
+    const units::specific_energy completely_liquid_specific_energy = completely_frozen_specific_energy +
+            units::from_joule_per_gram( latent_heat );
 
     float new_specific_energy;
     float new_item_temperature;
@@ -12472,7 +12355,7 @@ void item::calc_temp( const int temp, const float insulation, const time_duratio
     // Calculations are done assuming that the item stays in its phase.
     // This assumption can cause over heating when transitioning from melting to liquid.
     // In other transitions the item may cool/heat too little but that won't be a problem.
-    if( 0.00001 * specific_energy < completely_frozen_specific_energy ) {
+    if( specific_energy < completely_frozen_specific_energy ) {
         // Was solid.
         new_item_temperature = ( - temperature_difference
                                  * std::exp( - to_turns<int>( time_delta ) * conductivity_term / ( mass * specific_heat_solid ) )
@@ -12486,26 +12369,26 @@ void item::calc_temp( const int temp, const float insulation, const time_duratio
             extra_time = to_turns<int>( time_delta )
                          - std::log( - temperature_difference / ( freezing_temperature - env_temperature ) )
                          * ( mass * specific_heat_solid / conductivity_term );
-            new_specific_energy = completely_frozen_specific_energy
+            new_specific_energy = units::to_joule_per_gram( completely_frozen_specific_energy )
                                   + conductivity_term
                                   * ( env_temperature - freezing_temperature ) * extra_time / mass;
             new_item_temperature = freezing_temperature;
-            if( new_specific_energy > completely_liquid_specific_energy ) {
+            if( units::from_joule_per_gram( new_specific_energy ) > completely_liquid_specific_energy ) {
                 // The item then also finished melting.
                 // This may happen rarely with very small items
                 // Just set the item to environment temperature
-                set_item_temperature( env_temperature );
+                set_item_temperature( units::from_kelvin( env_temperature ) );
                 return;
             }
         }
-    } else if( 0.00001 * specific_energy > completely_liquid_specific_energy ) {
+    } else if( specific_energy > completely_liquid_specific_energy ) {
         // Was liquid.
         new_item_temperature = ( - temperature_difference
                                  * std::exp( - to_turns<int>( time_delta ) * conductivity_term / ( mass *
                                              specific_heat_liquid ) )
                                  + env_temperature );
         new_specific_energy = ( new_item_temperature - freezing_temperature ) * specific_heat_liquid +
-                              completely_liquid_specific_energy;
+                              units::to_joule_per_gram( completely_liquid_specific_energy );
         if( new_item_temperature < freezing_temperature - 0.5 ) {
             // Started freezing before temp was calculated.
             // 0.5 is here because we don't care if it cools down a bit too low
@@ -12514,72 +12397,73 @@ void item::calc_temp( const int temp, const float insulation, const time_duratio
             extra_time = to_turns<int>( time_delta )
                          - std::log( - temperature_difference / ( freezing_temperature - env_temperature ) )
                          * ( mass * specific_heat_liquid / conductivity_term );
-            new_specific_energy = completely_liquid_specific_energy
+            new_specific_energy = units::to_joule_per_gram( completely_liquid_specific_energy )
                                   + conductivity_term
                                   * ( env_temperature - freezing_temperature ) * extra_time / mass;
             new_item_temperature = freezing_temperature;
-            if( new_specific_energy < completely_frozen_specific_energy ) {
+            if( units::from_joule_per_gram( new_specific_energy ) < completely_frozen_specific_energy ) {
                 // The item then also finished freezing.
                 // This may happen rarely with very small items
                 // Just set the item to environment temperature
-                set_item_temperature( env_temperature );
+                set_item_temperature( units::from_kelvin( env_temperature ) );
                 return;
             }
         }
     } else {
         // Was melting or freezing
-        new_specific_energy = 0.00001 * specific_energy + conductivity_term *
+        new_specific_energy = units::to_joule_per_gram( specific_energy ) + conductivity_term *
                               temperature_difference * to_turns<int>( time_delta ) / mass;
         new_item_temperature = freezing_temperature;
-        if( new_specific_energy > completely_liquid_specific_energy ) {
+        if( units::from_joule_per_gram( new_specific_energy ) > completely_liquid_specific_energy ) {
             // Item melted before temp was calculated
             // Calculate how long the item was melting
             // and apply rest of the time as liquid
             extra_time = to_turns<int>( time_delta ) - ( mass / ( conductivity_term * temperature_difference ) )
                          *
-                         ( completely_liquid_specific_energy - 0.00001 * specific_energy );
+                         units::to_joule_per_gram( completely_liquid_specific_energy - specific_energy );
             new_item_temperature = ( ( freezing_temperature - env_temperature )
                                      * std::exp( - extra_time * conductivity_term / ( mass *
                                                  specific_heat_liquid ) )
                                      + env_temperature );
             new_specific_energy = ( new_item_temperature - freezing_temperature ) * specific_heat_liquid +
-                                  completely_liquid_specific_energy;
-        } else if( new_specific_energy < completely_frozen_specific_energy ) {
+                                  units::to_joule_per_gram( completely_liquid_specific_energy );
+        } else if( units::from_joule_per_gram( new_specific_energy ) < completely_frozen_specific_energy ) {
             // Item froze before temp was calculated
             // Calculate how long the item was freezing
             // and apply rest of the time as solid
             extra_time = to_turns<int>( time_delta ) - ( mass / ( conductivity_term * temperature_difference ) )
                          *
-                         ( completely_frozen_specific_energy - 0.00001 * specific_energy );
+                         units::to_joule_per_gram( completely_frozen_specific_energy - specific_energy );
             new_item_temperature = ( ( freezing_temperature - env_temperature )
-                                     * std::exp( -  extra_time * conductivity_term / ( mass *
+                                     * std::exp( - extra_time * conductivity_term / ( mass *
                                                  specific_heat_solid ) )
                                      + env_temperature );
             new_specific_energy = new_item_temperature * specific_heat_solid;
         }
     }
     // Check freeze status now based on energies.
-    if( new_specific_energy > completely_liquid_specific_energy ) {
+    if( units::from_joule_per_gram( new_specific_energy ) > completely_liquid_specific_energy ) {
         freeze_percentage = 0;
-    } else if( new_specific_energy < completely_frozen_specific_energy ) {
+    } else if( units::from_joule_per_gram( new_specific_energy ) < completely_frozen_specific_energy ) {
         // Item is solid
         freeze_percentage = 1;
     } else {
         // Item is partially solid
-        freeze_percentage = ( completely_liquid_specific_energy - new_specific_energy ) /
-                            ( completely_liquid_specific_energy - completely_frozen_specific_energy );
+        freeze_percentage = ( units::to_joule_per_gram( completely_liquid_specific_energy ) -
+                              new_specific_energy ) /
+                            units::to_joule_per_gram( completely_liquid_specific_energy - completely_frozen_specific_energy );
     }
 
-    temperature = std::lround( 100000 * new_item_temperature );
-    specific_energy = std::lround( 100000 * new_specific_energy );
-    set_temp_flags( new_item_temperature, freeze_percentage );
+    temperature = units::from_kelvin( new_item_temperature );
+    specific_energy = units::from_joule_per_gram( new_specific_energy );
+    set_temp_flags( temperature, freeze_percentage );
 }
 
-void item::set_temp_flags( float new_temperature, float freeze_percentage )
+void item::set_temp_flags( units::temperature new_temperature, float freeze_percentage )
 {
-    float freezing_temperature = celsius_to_kelvin( get_freeze_point() );
+    units::temperature freezing_temperature = get_freeze_point();
     // Apply temperature tags tags
-    // Hot = over  temperatures::hot
+    // Hot = over temperatures::hot
     // Warm = over temperatures::warm
     // Cold = below temperatures::cold
     // Frozen = Over 50% frozen
@@ -12589,13 +12473,17 @@ void item::set_temp_flags( float new_temperature, float freeze_percentage )
             // Item melts and becomes mushy
             current_phase = type->phase;
             apply_freezerburn();
+            unset_flag( flag_SHREDDED );
+            if( made_of( phase_id::LIQUID ) ) {
+                set_flag( flag_FROM_FROZEN_LIQUID );
+            }
         }
     } else if( has_own_flag( flag_COLD ) ) {
         unset_flag( flag_COLD );
     } else if( has_own_flag( flag_HOT ) ) {
         unset_flag( flag_HOT );
     }
-    if( new_temperature > temp_to_kelvin( temperatures::hot ) ) {
+    if( new_temperature > temperatures::hot ) {
         set_flag( flag_HOT );
     } else if( freeze_percentage > 0.5 ) {
         set_flag( flag_FROZEN );
@@ -12604,12 +12492,12 @@ void item::set_temp_flags( float new_temperature, float freeze_percentage )
         if( is_food() && new_temperature < freezing_temperature && get_comestible()->parasites > 0 ) {
             set_flag( flag_NO_PARASITES );
         }
-    } else if( new_temperature < temp_to_kelvin( temperatures::cold ) ) {
+    } else if( new_temperature < temperatures::cold ) {
         set_flag( flag_COLD );
     }
 
     // Convert water into clean water if it starts boiling
-    if( typeId() == itype_water && new_temperature > temp_to_kelvin( temperatures::boiling ) ) {
+    if( typeId() == itype_water && new_temperature > temperatures::boiling ) {
         convert( itype_water_clean ).poison = 0;
     }
 }
@@ -12617,19 +12505,20 @@ void item::set_temp_flags( float new_temperature, float freeze_percentage )
 float item::get_item_thermal_energy() const
 {
     const float mass = to_gram( weight() ); // g
-    return 0.00001 * specific_energy * mass;
+    return units::to_joule_per_gram( specific_energy ) * mass;
 }
 
 void item::heat_up()
 {
     unset_flag( flag_COLD );
     unset_flag( flag_FROZEN );
+    unset_flag( flag_SHREDDED );
     set_flag( flag_HOT );
     current_phase = type->phase;
     // Set item temperature to 60 C (333.15 K, 122 F)
     // Also set the energy to match
-    temperature = 333.15 * 100000;
-    specific_energy = std::lround( 100000 * get_specific_energy_from_temperature( 333.15 ) );
+    temperature = units::from_celsius( 60 );
+    specific_energy = get_specific_energy_from_temperature( units::from_celsius( 60 ) );
 
     reset_temp_check();
 }
@@ -12638,12 +12527,13 @@ void item::cold_up()
 {
     unset_flag( flag_HOT );
     unset_flag( flag_FROZEN );
+    unset_flag( flag_SHREDDED );
     set_flag( flag_COLD );
     current_phase = type->phase;
     // Set item temperature to 3 C (276.15 K, 37.4 F)
     // Also set the energy to match
-    temperature = 276.15 * 100000;
-    specific_energy = std::lround( 100000 * get_specific_energy_from_temperature( 276.15 ) );
+    temperature = units::from_celsius( 3 );
+    specific_energy = get_specific_energy_from_temperature( units::from_celsius( 3 ) );
 
     reset_temp_check();
 }
@@ -12660,13 +12550,20 @@ std::vector<trait_id> item::mutations_from_wearing( const Character &guy, bool r
     }
     std::vector<trait_id> muts;
 
-    for( const enchantment &ench : relic_data->get_enchantments() ) {
+    for( const enchant_cache &ench : relic_data->get_proc_enchantments() ) {
         for( const trait_id &mut : ench.get_mutations() ) {
             // this may not be perfectly accurate due to conditions
             muts.push_back( mut );
         }
     }
-
+    if( type->relic_data ) {
+        for( const enchantment &ench : type->relic_data->get_defined_enchantments() ) {
+            for( const trait_id &mut : ench.get_mutations() ) {
+                // this may not be perfectly accurate due to conditions
+                muts.push_back( mut );
+            }
+        }
+    }
     for( const trait_id &char_mut : guy.get_mutations( true, removing ) ) {
         for( auto iter = muts.begin(); iter != muts.end(); ) {
             if( char_mut == *iter ) {
@@ -12697,19 +12594,6 @@ void item::process_relic( Character *carrier, const tripoint &pos )
     }
 
     relic_data->try_recharge( *this, carrier, pos );
-
-    if( carrier == nullptr ) {
-        // return early; all of the rest of this function is character-specific
-        return;
-    }
-
-    std::vector<enchantment> active_enchantments;
-
-    for( const enchantment &ench : get_enchantments() ) {
-        if( ench.is_active( *carrier, *this ) ) {
-            active_enchantments.emplace_back( ench );
-        }
-    }
 }
 
 bool item::process_corpse( map &here, Character *carrier, const tripoint &pos )
@@ -12785,6 +12669,27 @@ bool item::process_fake_smoke( map &here, Character * /*carrier*/, const tripoin
 
 bool item::process_litcig( map &here, Character *carrier, const tripoint &pos )
 {
+    // cig dies out
+    if( item_counter == 0 ) {
+        if( carrier != nullptr ) {
+            carrier->add_msg_if_player( m_neutral, _( "You finish your %s." ), tname() );
+        }
+        if( typeId() == itype_cig_lit ) {
+            convert( itype_cig_butt );
+        } else if( typeId() == itype_cigar_lit ) {
+            convert( itype_cigar_butt );
+        } else { // joint
+            convert( itype_joint_roach );
+            if( carrier != nullptr ) {
+                carrier->add_effect( effect_weed_high, 1_minutes ); // one last puff
+                here.add_field( pos + point( rng( -1, 1 ), rng( -1, 1 ) ), field_type_id( "fd_weedsmoke" ), 2 );
+                weed_msg( *carrier );
+            }
+        }
+        active = false;
+        return false;
+    }
+
     if( !one_in( 10 ) ) {
         return false;
     }
@@ -12835,25 +12740,6 @@ bool item::process_litcig( map &here, Character *carrier, const tripoint &pos )
         }
     }
 
-    // cig dies out
-    if( item_counter == 0 ) {
-        if( carrier != nullptr ) {
-            carrier->add_msg_if_player( m_neutral, _( "You finish your %s." ), tname() );
-        }
-        if( typeId() == itype_cig_lit ) {
-            convert( itype_cig_butt );
-        } else if( typeId() == itype_cigar_lit ) {
-            convert( itype_cigar_butt );
-        } else { // joint
-            convert( itype_joint_roach );
-            if( carrier != nullptr ) {
-                carrier->add_effect( effect_weed_high, 1_minutes ); // one last puff
-                here.add_field( pos + point( rng( -1, 1 ), rng( -1, 1 ) ), field_type_id( "fd_weedsmoke" ), 2 );
-                weed_msg( *carrier );
-            }
-        }
-        active = false;
-    }
     // Item remains
     return false;
 }
@@ -12896,7 +12782,8 @@ bool item::process_extinguish( map &here, Character *carrier, const tripoint &po
         extinguish = true;
     }
     if( !extinguish ||
-        ( in_inv && precipitation && carrier->get_wielded_item().has_flag( flag_RAIN_PROTECT ) ) ) {
+        ( in_inv && precipitation && carrier->get_wielded_item() &&
+          carrier->get_wielded_item()->has_flag( flag_RAIN_PROTECT ) ) ) {
         return false; //nothing happens
     }
     if( carrier != nullptr ) {
@@ -12933,16 +12820,16 @@ bool item::process_extinguish( map &here, Character *carrier, const tripoint &po
     return false;
 }
 
-cata::optional<tripoint> item::get_cable_target( Character *p, const tripoint &pos ) const
+std::optional<tripoint> item::get_cable_target( Character *p, const tripoint &pos ) const
 {
     const std::string &state = get_var( "state" );
     if( state != "pay_out_cable" && state != "cable_charger_link" ) {
-        return cata::nullopt;
+        return std::nullopt;
     }
     map &here = get_map();
     const optional_vpart_position vp_pos = here.veh_at( pos );
     if( vp_pos ) {
-        const cata::optional<vpart_reference> seat = vp_pos.part_with_feature( "BOARDABLE", true );
+        const std::optional<vpart_reference> seat = vp_pos.part_with_feature( "BOARDABLE", true );
         if( seat && p == seat->vehicle().get_passenger( seat->part_index() ) ) {
             return pos;
         }
@@ -12983,7 +12870,7 @@ bool item::process_cable( map &here, Character *carrier, const tripoint &pos )
             return false;
         }
     }
-    const cata::optional<tripoint> source = get_cable_target( carrier, pos );
+    const std::optional<tripoint> source = get_cable_target( carrier, pos );
     if( !source ) {
         return false;
     }
@@ -13067,7 +12954,7 @@ bool item::process_tool( Character *carrier, const tripoint &pos )
 
     avatar &player_character = get_avatar();
     // if insufficient available charges shutdown the tool
-    if( ( type->tool->turns_per_charge > 0 || type->tool->power_draw > 0 ) &&
+    if( ( type->tool->turns_per_charge > 0 || type->tool->power_draw > 0_W ) &&
         ammo_remaining( carrier ) == 0 ) {
         if( carrier && has_flag( flag_USE_UPS ) ) {
             carrier->add_msg_if_player( m_info, _( "You need an UPS to run the %s!" ), tname() );
@@ -13091,11 +12978,12 @@ bool item::process_tool( Character *carrier, const tripoint &pos )
     if( type->tool->turns_per_charge > 0 &&
         to_turn<int>( calendar::turn ) % type->tool->turns_per_charge == 0 ) {
         energy = std::max( ammo_required(), 1 );
-    } else if( type->tool->power_draw > 0 ) {
-        // power_draw in mW / 1000000 to give kJ (battery unit) per second
-        energy = type->tool->power_draw / 1000000;
+    } else if( type->tool->power_draw > 0_W ) {
+        // kJ (battery unit) per second
+        energy = units::to_kilowatt( type->tool->power_draw );
         // energy_bat remainder results in chance at additional charge/discharge
-        energy += x_in_y( type->tool->power_draw % 1000000, 1000000 ) ? 1 : 0;
+        const int kw_in_mw = units::to_milliwatt( 1_kW );
+        energy += x_in_y( units::to_milliwatt( type->tool->power_draw ) % kw_in_mw, kw_in_mw ) ? 1 : 0;
     }
 
     if( energy > 0 ) {
@@ -13118,12 +13006,32 @@ bool item::process_blackpowder_fouling( Character *carrier )
 }
 
 bool item::process( map &here, Character *carrier, const tripoint &pos, float insulation,
-                    temperature_flag flag, float spoil_multiplier_parent )
+                    temperature_flag flag, float spoil_multiplier_parent, bool recursive )
 {
     process_relic( carrier, pos );
-    contents.process( here, carrier, pos, type->insulation_factor * insulation, flag,
-                      spoil_multiplier_parent );
+    if( recursive ) {
+        contents.process( here, carrier, pos, type->insulation_factor * insulation, flag,
+                          spoil_multiplier_parent );
+    }
     return process_internal( here, carrier, pos, insulation, flag, spoil_multiplier_parent );
+}
+
+bool item::leak( map &here, Character *carrier, const tripoint &pos, item_pocket *pocke )
+{
+    if( is_container() ) {
+        contents.leak( here, carrier, pos, pocke );
+        return false;
+    } else if( this->made_of( phase_id::LIQUID ) && !this->is_frozen_liquid() ) {
+        if( pocke ) {
+            if( pocke->watertight() ) {
+                unset_flag( flag_FROM_FROZEN_LIQUID );
+                return false;
+            }
+            return true;
+        }
+        return true;
+    }
+    return false;
 }
 
 void item::set_last_temp_check( const time_point &pt )
@@ -13202,11 +13110,11 @@ bool item::process_internal( map &here, Character *carrier, const tripoint &pos,
                 // Drying items are never destroyed, but we want to exit so they don't get processed as tools.
                 return false;
             }
-            if( has_flag( flag_LITCIG ) && mark_flag()  && process_litcig( here, carrier, pos ) ) {
+            if( has_flag( flag_LITCIG ) && mark_flag() && process_litcig( here, carrier, pos ) ) {
                 return true;
             }
             if( ( has_flag( flag_WATER_EXTINGUISH ) || has_flag( flag_WIND_EXTINGUISH ) ) &&
-                mark_flag()  && process_extinguish( here, carrier, pos ) ) {
+                mark_flag() && process_extinguish( here, carrier, pos ) ) {
                 return false;
             }
             if( has_flag( flag_CABLE_SPOOL ) && mark_flag() ) {
@@ -13237,7 +13145,7 @@ bool item::process_internal( map &here, Character *carrier, const tripoint &pos,
             return true;
         }
     } else {
-        // guns are never active so we only need thick this on inactive items. For performance reasons.
+        // guns are never active so we only need to tick this on inactive items. For performance reasons.
         if( has_fault_flag( flag_BLACKPOWDER_FOULING_DAMAGE ) ) {
             return process_blackpowder_fouling( carrier );
         }
@@ -13385,7 +13293,6 @@ bool item::is_bp_rigid( const T &bp ) const
         return true;
     }
 
-
     const armor_portion_data *portion = portion_for_bodypart( bp );
 
     if( !portion ) {
@@ -13438,7 +13345,6 @@ bool item::is_bp_comfortable( const T &bp ) const
     } else if( has_flag( flag_HARD ) ) {
         return false;
     }
-
 
     const armor_portion_data *portion = portion_for_bodypart( bp );
 
@@ -13512,13 +13418,27 @@ std::string item::type_name( unsigned int quantity ) const
 
     // Apply conditional names, in order.
     for( const conditional_name &cname : type->conditional_names ) {
-        // Lambda for recursively searching for a item ID among all components.
-        std::function<bool ( std::list<item> )> component_id_contains =
-        [&]( const std::list<item> &components ) {
-            for( const item &component : components ) {
-                if( component.typeId().str().find( cname.condition ) != std::string::npos ||
-                    component_id_contains( component.components ) ) {
-                    return true;
+        // Lambda for searching for a item ID among all components.
+        std::function<bool( item_components )> component_id_equals =
+        [&]( const item_components & components ) {
+            for( const item_components::type_vector_pair &tvp : components ) {
+                for( const item &component : tvp.second ) {
+                    if( component.typeId().str() == cname.condition ) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        };
+        // Lambda for recursively searching for a item ID substring among all components.
+        std::function<bool ( item_components )> component_id_contains =
+        [&]( const item_components & components ) {
+            for( const item_components::type_vector_pair &tvp : components ) {
+                for( const item &component : tvp.second ) {
+                    if( component.typeId().str().find( cname.condition ) != std::string::npos ||
+                        component_id_contains( component.components ) ) {
+                        return true;
+                    }
                 }
             }
             return false;
@@ -13530,6 +13450,11 @@ std::string item::type_name( unsigned int quantity ) const
                 }
                 break;
             case condition_type::COMPONENT_ID:
+                if( component_id_equals( components ) ) {
+                    ret_name = string_format( cname.name.translated( quantity ), ret_name );
+                }
+                break;
+            case condition_type::COMPONENT_ID_SUBSTRING:
                 if( component_id_contains( components ) ) {
                     ret_name = string_format( cname.name.translated( quantity ), ret_name );
                 }
@@ -13593,7 +13518,7 @@ const itype *item::find_type( const itype_id &type )
     return item_controller->find_template( type );
 }
 
-int item::get_gun_ups_drain() const
+units::energy item::get_gun_ups_drain() const
 {
     int draincount = 0;
     if( type->gun ) {
@@ -13605,7 +13530,7 @@ int item::get_gun_ups_drain() const
         }
         draincount = ( type->gun->ups_charges * multiplier ) + modifier;
     }
-    return draincount;
+    return units::from_kilojoule( draincount );
 }
 
 bool item::has_label() const
@@ -13723,15 +13648,20 @@ std::vector<item_comp> item::get_uncraft_components() const
         }
     } else {
         //Make a new vector of components from the registered components
-        for( const item &component : components ) {
-            auto iter = std::find_if( ret.begin(), ret.end(), [component]( item_comp & obj ) {
-                return obj.type == component.typeId();
-            } );
+        for( const item_components::type_vector_pair &tvp : components ) {
+            for( const item &component : tvp.second ) {
+                if( component.has_flag( flag_UNRECOVERABLE ) ) {
+                    continue;
+                }
+                auto iter = std::find_if( ret.begin(), ret.end(), [component]( item_comp & obj ) {
+                    return obj.type == component.typeId();
+                } );
 
-            if( iter != ret.end() ) {
-                iter->count += component.count();
-            } else {
-                ret.emplace_back( component.typeId(), component.count() );
+                if( iter != ret.end() ) {
+                    iter->count += component.count();
+                } else {
+                    ret.emplace_back( component.typeId(), component.count() );
+                }
             }
         }
     }
@@ -13851,7 +13781,8 @@ units::volume item::check_for_free_space() const
             volume += container->check_for_free_space();
 
             for( const item_pocket *pocket : containedPockets ) {
-                if( pocket->rigid() && ( pocket->empty() || pocket->contains_phase( phase_id::SOLID ) ) ) {
+                if( pocket->rigid() && ( pocket->empty() || pocket->contains_phase( phase_id::SOLID ) ) &&
+                    pocket->get_pocket_data()->ammo_restriction.empty() ) {
                     volume += pocket->remaining_volume();
                 }
             }
@@ -13953,6 +13884,25 @@ std::list<const item *> item::all_items_top( item_pocket::pocket_type pk_type ) 
 std::list<item *> item::all_items_top( item_pocket::pocket_type pk_type, bool unloading )
 {
     return contents.all_items_top( pk_type, unloading );
+}
+
+item const *item::this_or_single_content() const
+{
+    return type->category_force == item_category_container && contents_only_one_type()
+           ? &contents.first_item()
+           : this;
+}
+
+bool item::contents_only_one_type() const
+{
+    std::list<const item *> const items = contents.all_items_top( []( item_pocket const & pkt ) {
+        return pkt.is_standard_type() || pkt.is_type( item_pocket::pocket_type::SOFTWARE );
+    } );
+    return items.size() == 1 ||
+           ( items.size() > 1 &&
+    std::all_of( ++items.begin(), items.end(), [&items]( item const * e ) {
+        return e->stacks_with( *items.front() );
+    } ) );
 }
 
 std::list<const item *> item::all_items_ptr() const

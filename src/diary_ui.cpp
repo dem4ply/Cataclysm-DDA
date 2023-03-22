@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "color.h"
@@ -24,9 +25,9 @@
 namespace
 {
 /**print list scrollable, printed std::vector<std::string> as list with scrollbar*/
-void print_list_scrollable( catacurses::window *win, std::vector<std::string> list, int *selection,
-                            int entries_per_page, int xoffset, int width, bool active, bool border,
-                            const report_color_error color_error )
+void print_list_scrollable( catacurses::window *win, const std::vector<std::string> &list,
+                            int *selection, int entries_per_page, int xoffset, int width,
+                            bool active, bool border, const report_color_error color_error )
 {
     if( *selection < 0 && !list.empty() ) {
         *selection = static_cast<int>( list.size() ) - 1;
@@ -35,7 +36,6 @@ void print_list_scrollable( catacurses::window *win, std::vector<std::string> li
     }
     const int borderspace = border ? 1 : 0;
     entries_per_page = entries_per_page - borderspace * 2;
-
 
     const int top_of_page = entries_per_page * ( *selection / entries_per_page );
 
@@ -66,14 +66,16 @@ void print_list_scrollable( catacurses::window *win, std::vector<std::string> li
 
 }
 
-void print_list_scrollable( catacurses::window *win, std::vector<std::string> list, int *selection,
-                            bool active, bool border, const report_color_error color_error )
+void print_list_scrollable( catacurses::window *win, const std::vector<std::string> &list,
+                            int *selection, bool active, bool border,
+                            const report_color_error color_error )
 {
-    print_list_scrollable( win, list, selection, getmaxy( *win ), 0, getmaxx( *win ), active, border,
+    print_list_scrollable( win, list, selection, getmaxy( *win ), 0, getmaxx( *win ),
+                           active, border,
                            color_error );
 }
 
-void print_list_scrollable( catacurses::window *win, std::string text, int *selection,
+void print_list_scrollable( catacurses::window *win, const std::string &text, int *selection,
                             int entries_per_page, int xoffset, int width, bool active, bool border,
                             const report_color_error color_error )
 {
@@ -84,7 +86,8 @@ void print_list_scrollable( catacurses::window *win, std::string text, int *sele
                            color_error );
 }
 
-void print_list_scrollable( catacurses::window *win, std::string text, int *selection, bool active,
+void print_list_scrollable( catacurses::window *win, const std::string &text, int *selection,
+                            bool active,
                             bool border, const report_color_error color_error )
 {
     print_list_scrollable( win, text, selection, getmaxy( *win ), 0, getmaxx( *win ), active, border,
@@ -165,9 +168,7 @@ void diary::show_diary_ui( diary *c_diary )
     enum class window_mode : int {PAGE_WIN = 0, CHANGE_WIN, TEXT_WIN, NUM_WIN, FIRST_WIN = 0, LAST_WIN = NUM_WIN - 1};
     window_mode currwin = window_mode::PAGE_WIN;
 
-
     std::map<window_mode, int> selected = { {window_mode::PAGE_WIN, 0}, {window_mode::CHANGE_WIN, 0}, {window_mode::TEXT_WIN, 0} };
-
 
     input_context ctxt( "DIARY" );
     ctxt.register_cardinal();

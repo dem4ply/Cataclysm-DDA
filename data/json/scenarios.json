@@ -90,7 +90,7 @@
     ],
     "start_name": "In Town",
     "surround_groups": [ [ "GROUP_BLACK_ROAD", 70.0 ] ],
-    "flags": [ "CITY_START", "LONE_START" ]
+    "flags": [ "CITY_START", "LONE_START", "SUR_START" ]
   },
   {
     "type": "scenario",
@@ -226,12 +226,13 @@
   },
   {
     "type": "scenario",
-    "name": "(un)living History",
-    "description": "After doing historical reenactment you and your friend are taking break inside the fort, and then you heard a scream and gunshot noises.",
+    "name": "Unliving History",
+    "description": "New England is dotted with old forts from the Revolutionary War, and many of them are still standing.  When things started getting really bad, it seemed like a natural place to hole up for a while, and it turns out that many, many other people had the same idea.  The peace didn't last long.  Now everyone else is undead, and you're trapped inside the walls with them.  The single entrance being a tight choke point is looking a lot less useful now…",
     "id": "BastionFortStart",
     "points": -2,
     "start_name": "Bastion Fort",
-    "allowed_locs": [ "sloc_fort" ]
+    "allowed_locs": [ "sloc_fort" ],
+    "flags": [ "CHALLENGE", "LONE_START" ]
   },
   {
     "type": "scenario",
@@ -302,7 +303,6 @@
       "ELFAEYES",
       "URSINE_EYE",
       "FANGS",
-      "GILLS",
       "SPINES",
       "PLANTSKIN",
       "NAILS",
@@ -340,6 +340,7 @@
       "CHITIN",
       "ELECTRORECEPTORS"
     ],
+    "requirement": "achievement_reach_lab_finale",
     "flags": [ "CHALLENGE", "CITY_START", "LONE_START" ]
   },
   {
@@ -351,6 +352,7 @@
     "start_name": "Locked Lab",
     "professions": [ "labtech", "security", "medic" ],
     "allowed_locs": [ "sloc_lab_random", "sloc_lab_escape_cells", "sloc_lab_finale", "sloc_ice_lab_stairs", "sloc_ice_lab_finale" ],
+    "requirement": "achievement_reach_lab_finale",
     "flags": [ "CHALLENGE", "CITY_START", "LONE_START" ]
   },
   {
@@ -396,7 +398,8 @@
     "flags": [ "LONE_START" ],
     "custom_initial_date": { "season": "winter" },
     "add_professions": true,
-    "professions": [ "sheltered_survivor", "sheltered_militia", "winter_scavenger", "winter_army" ]
+    "professions": [ "sheltered_survivor", "sheltered_militia", "winter_scavenger", "winter_army" ],
+    "requirement": "achievement_survive_91_days"
   },
   {
     "type": "scenario",
@@ -420,7 +423,21 @@
     "flags": [ "LONE_START" ],
     "custom_initial_date": { "season": "summer", "year": 2 },
     "add_professions": true,
-    "professions": [ "sheltered_survivor", "sheltered_militia", "winter_scavenger", "winter_army" ]
+    "professions": [ "sheltered_survivor", "sheltered_militia", "winter_scavenger", "winter_army" ],
+    "requirement": "achievement_survive_91_days"
+  },
+  {
+    "type": "scenario",
+    "id": "faction_camp_start",
+    "name": "Brave New World",
+    "points": 8,
+    "description": "It's been a year since the apocalypse, and winter is fast approaching.  You and your company have managed to gather up enough supplies to finally settle down somewhere, away from the death and destruction.  Life has been hard for you, but a bright new future lies ahead in your vision.",
+    "start_name": "Old Evac Shelter",
+    "allowed_locs": [ "sloc_shelter_a", "sloc_shelter_b", "sloc_shelter_c" ],
+    "custom_initial_date": { "season": "autumn", "year": 2 },
+    "requirement": "achievement_survive_91_days",
+    "eoc": [ "faction_camp_start" ],
+    "flags": [ "CITY_START", "LONE_START" ]
   },
   {
     "type": "scenario",
@@ -444,7 +461,7 @@
     "start_name": "Hospital",
     "forced_traits": [ "FLIMSY2" ],
     "forbidden_traits": [ "TOUGH", "DISRESISTANT" ],
-    "professions": [ "unemployed", "patient" ],
+    "professions": [ "unemployed", "patient", "veteran" ],
     "flags": [ "CHALLENGE", "CITY_START", "LONE_START" ]
   },
   {
@@ -514,7 +531,6 @@
       "ELFAEYES",
       "URSINE_EYE",
       "FANGS",
-      "GILLS",
       "SPINES",
       "PLANTSKIN",
       "NAILS",
@@ -615,16 +631,23 @@
       "politician",
       "hitman",
       "assassin",
+      "mil_marksman",
+      "mil_auto_rifleman",
+      "mil_grenadier",
+      "mil_breacher",
+      "mil_sniper",
+      "mil_hacker",
+      "mil_undercover",
       "mili_pilot",
       "mili_medic",
-      "mili_burner",
       "major-general",
       "nco",
       "combat-mechanic",
       "combat-engineer"
     ],
     "map_extra": "mx_helicopter",
-    "flags": [ "HELI_CRASH", "LONE_START" ]
+    "flags": [ "HELI_CRASH", "LONE_START" ],
+    "missions": [ "MISSION_HELICOPTER_CRASH" ]
   },
   {
     "type": "scenario",
@@ -635,7 +658,7 @@
     "start_name": "Bottom of a mine",
     "allowed_locs": [ "sloc_mine_finale" ],
     "professions": [ "miner", "labtech", "security", "archaeologist" ],
-    "flags": [ "CITY_START", "LONE_START" ]
+    "flags": [ "CITY_START", "LONE_START", "CHALLENGE" ]
   },
   {
     "type": "scenario",
@@ -652,9 +675,15 @@
       "specops",
       "labtech",
       "medic",
+      "mil_marksman",
+      "mil_auto_rifleman",
+      "mil_grenadier",
+      "mil_breacher",
+      "mil_sniper",
+      "mil_hacker",
+      "mil_undercover",
       "mili_pilot",
       "mili_medic",
-      "mili_burner",
       "hazmat_unit",
       "major-general",
       "nco",
@@ -690,7 +719,7 @@
     "id": "strong_portal_storm",
     "name": "Splintering Reality",
     "points": -3,
-    "description": "You found yourself alone in an open field when reality begun to heave and crack all around you.  You need to find shelter, and fast.",
+    "description": "You found yourself alone in an open field when reality began to heave and crack all around you.  You need to find shelter, and fast.",
     "flags": [ "CHALLENGE", "LONE_START" ],
     "start_name": "Field",
     "allowed_locs": [ "sloc_field" ],
@@ -734,39 +763,71 @@
   {
     "type": "scenario",
     "id": "Mansion",
-    "name": "Mansion Escape",
-    "points": -1,
-    "description": "You were living the high life when the world ended, surrounded by riches and extravagant food every day, but now you find yourself awakening from an induced paralysis and carried to the basement of the mansion in which you used to live, heavy footsteps resound around you, are you ready to survive in this new world?",
-    "allowed_locs": [ "sloc_mansion_basement" ],
+    "name": "Challenge - Mansion Escape",
+    "points": -5,
+    "description": "You were living the high life when the world ended, surrounded by riches and extravagant food every day.  Now you've woken up alone and drugged in a room of your old mansion for who knows what purpose.  You lost consciousness and now heavy footsteps nearby awake you.  Time to find out if you're ready to escape and survive the real world again.",
+    "allowed_locs": [ "sloc_mansion_basement", "sloc_enclosed_mansion_panic_room", "sloc_enclosed_mansion_sex_lair" ],
     "start_name": "Mansion",
-    "surround_groups": [ [ "GROUP_MANSION_START", 90.0 ], [ "GROUP_MANSION_ARMORED", 10.0 ] ],
-    "eoc": [ "scenario_paralyzepoison" ],
+    "surround_groups": [ [ "GROUP_MANSION_START", 70.0 ] ],
+    "eoc": [ "scenario_paralyzepoison", "scenario_mansion_pursuit" ],
     "flags": [ "CHALLENGE", "LONE_START" ],
     "professions": [
+      "naked",
       "maid",
       "frat",
       "lost_sub",
+      "backpacker",
+      "heli_pilot",
       "lawyer",
       "politician",
       "dancer",
       "cheerleader",
+      "football_player",
+      "basketball_player",
+      "baseball_player",
+      "tailor",
+      "video_blogger",
       "spouse",
       "musician",
       "chef",
+      "senior",
+      "otaku",
+      "punkrockgirl",
+      "skaboy",
       "groundskeeper",
       "homemaker",
+      "pizzaboy",
+      "paranormal_investigator",
+      "archaeologist",
+      "tourist",
+      "urbex",
+      "burglar",
       "ninja",
+      "urban_samurai",
+      "fencer",
       "mafia_boss",
-      "major-general"
+      "major-general",
+      "hitman",
+      "assassin"
     ],
     "missions": [ "MISSION_MANSION_START" ]
+  },
+  {
+    "type": "scenario",
+    "id": "infested_shelter_start",
+    "name": "Compromised Shelter",
+    "points": -1,
+    "description": "You have survived the initial wave of panic, and have achieved (relative) safety in one of the many government evac shelters.  However, the people you came with started to turn and now they're out for your flesh!  You've holed up in the basement for now, but sooner or later you have to make for the door… and fast!",
+    "allowed_locs": [ "sloc_shelter_infest_a", "sloc_shelter_infest_b", "sloc_shelter_infest_c" ],
+    "start_name": "In an Infested Shelter",
+    "flags": [ "CHALLENGE", "LONE_START" ]
   },
   {
     "type": "scenario",
     "id": "aircraft_carrier_start",
     "name": "CVN Sailor",
     "points": 4,
-    "description": "For some reason your mission off the coast of North Korea was ended in the middle of a lake, in an unknown location.  You have no idea what's happened, but now you have more important things to do.",
+    "description": "For some reason your mission off the coast of North Korea was ended in the middle of a lake, in an unknown location.  You have no idea what's happened, but now you have more important things to worry about.",
     "start_name": "Aircraft Carrier",
     "allowed_locs": [ "aircraft_carrier_berth", "aircraft_carrier_bridge" ],
     "professions": [
@@ -784,6 +845,28 @@
       "nco",
       "combat-engineer"
     ],
+    "flags": [ "CHALLENGE", "LONE_START" ]
+  },
+  {
+    "type": "scenario",
+    "id": "golden_years",
+    "name": "Golden Years",
+    "points": 0,
+    "description": "After a life time of hard work, you managed to settle down in a posh retirement community.  Safe behind those walls, you would live a peaceful, privileged life, away from all the crazy lunatics outside.  Then, the crazies made it inside anyway, leaving you no choice but to deal with them personally.  Welcome to your golden years.",
+    "allowed_locs": [ "sloc_retirement_community" ],
+    "start_name": "Retirement Community",
+    "professions": [ "senior", "old_vet" ],
+    "flags": [ "CITY_START", "LONE_START" ]
+  },
+  {
+    "type": "scenario",
+    "id": "nuclear_plant_start",
+    "name": "Emergency Shutdown",
+    "points": 1,
+    "description": "When the Cataclysm happened, you were working in a nuclear power plant.  Now you're trapped inside, surrounded by the shambling bodies of what used to be your coworkers.  The reactor's shut down, but you don't know if there's been a radiation leak and you need to get away from here fast before you find out the hard way.",
+    "start_name": "Nuclear Power Plant",
+    "allowed_locs": [ "nuclear_plant" ],
+    "professions": [ "electrician", "labtech", "medic" ],
     "flags": [ "CHALLENGE", "LONE_START" ]
   }
 ]

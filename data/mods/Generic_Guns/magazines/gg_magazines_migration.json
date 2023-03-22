@@ -12,9 +12,7 @@
       "ppkmag",
       "sigp230mag",
       "p226mag_12rd_357sig",
-      "p226mag_15rd_357sig",
       "p320mag_13rd_357sig",
-      "p320mag_14rd_357sig",
       "kp3atmag",
       "fn1910mag",
       "rugerlcpmag",
@@ -128,6 +126,7 @@
       "hk46bigmag",
       "hk46mag",
       "fnp90mag",
+      "robofacmultimag",
       "5x50_100_mag",
       "5x50_50_mag",
       "ppshdrum",
@@ -274,6 +273,8 @@
       "akmag30",
       "akmag40",
       "akdrum75",
+      "vz58mag30",
+      "vz58mag10",
       "8x40_100_mag",
       "8x40_250_mag",
       "8x40_25_mag",
@@ -281,8 +282,17 @@
       "8x40_50_mag",
       "famasmag",
       "robofac40",
+      "xedra40",
       "robofac100",
-      "robofac50"
+      "robofac50",
+      "usc10mag",
+      "usc15mag",
+      "usc20mag",
+      "m1carbinemag",
+      "m1carbinebigmag",
+      "zpap85mag",
+      "papm77mag",
+      "papm77mag_10rd"
     ],
     "type": "MIGRATION",
     "replace": "rifle_mag"
@@ -309,6 +319,8 @@
       "hk417_makeshiftmag",
       "ar10_makeshiftmag",
       "762x39_clip",
+      "pslmag5",
+      "pslmag10",
       "762R_clip",
       "borealmosin_clip",
       "robofac20"
@@ -317,7 +329,7 @@
     "replace": "rifle_sniper_mag"
   },
   {
-    "id": [ "exodiiBRmag" ],
+    "id": [ "exodiiBRmag", "robofac60_123ln" ],
     "type": "MIGRATION",
     "replace": "rifle_mag_foreign"
   },
@@ -332,6 +344,11 @@
     "replace": "rifle_rail_mag"
   },
   {
+    "id": [ "clip223_10rd" ],
+    "type": "MIGRATION",
+    "replace": "rifle_clip"
+  },
+  {
     "id": [
       "saiga410mag_10rd",
       "saiga410mag_30rd",
@@ -341,6 +358,11 @@
       "USAS20mag",
       "shotbelt_20",
       "robofac10",
+      "xedra10",
+      "robofac30",
+      "aa12_box_mag",
+      "aa12_drum_mag",
+      "aa12_vehicle_drum",
       "m26_mass_mag_3",
       "m26_mass_mag_5"
     ],

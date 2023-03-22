@@ -189,6 +189,17 @@
   {
     "type": "profession",
     "subtype": "hobby",
+    "id": "wrestling",
+    "name": "Wrestling",
+    "description": "While not the type of wrestler to use folding chairs as weapons, you have experience wrasslin' and tusslin' with others out on the mat.  There's no referees around to see, but hopefully your skills will help you avoid getting pinned by the undead.",
+    "points": 4,
+    "//": "If Grab Break ever becomes a proficiency instead of tied to martial arts, it should absolutely be added here and replace Fast Reflexes.",
+    "skills": [ { "level": 1, "name": "melee" }, { "level": 3, "name": "unarmed" }, { "level": 3, "name": "dodge" } ],
+    "traits": [ "FAST_REFLEXES" ]
+  },
+  {
+    "type": "profession",
+    "subtype": "hobby",
     "id": "vid_games",
     "name": "Video Gaming",
     "description": "You loved immersing yourself in virtual worlds through video games.  Now you're faced with real survival horror, and no extra lives.",
@@ -372,7 +383,7 @@
     "subtype": "hobby",
     "id": "melee_training",
     "name": "Melee Training",
-    "description": "You have practiced fighting with weapons.  You start with your choice of Barbaran Montante, Eskrima, Fencing, Fior Di Battaglia, Medieval Swordsmanship, Niten Ichi-Ryu, Pencak Silat, or Sōjutsu.",
+    "description": "You have practiced fighting with weapons.  You start with your choice of Barbaran Montante, Bōjutsu, Eskrima, Fencing, Fior Di Battaglia, Medieval Swordsmanship, Niten Ichi-Ryu, Pencak Silat, or Sōjutsu.",
     "points": 6,
     "skills": [
       { "level": 2, "name": "melee" },
@@ -387,10 +398,19 @@
     "subtype": "hobby",
     "id": "gourmand",
     "name": "Fine Dining",
-    "description": "Everyone eats to live, but you live to eat.  Tasty food will raise your morale more, and you aren't as upset by gross food.  You also eat faster, and can overeat with less chance of getting sick.",
-    "points": 3,
-    "traits": [ "GOURMAND" ],
+    "description": "You loved going to all kinds of restaurants and experiencing everything the world of culinary arts had to offer.  Nowadays, those chefs are all dead, so it'll be up to you to recreate the joys of your past.",
+    "points": 2,
+    "traits": [ "GOURMAND", "TABLEMANNERS" ],
     "skills": [ { "level": 2, "name": "cooking" } ]
+  },
+  {
+    "type": "profession",
+    "subtype": "hobby",
+    "id": "gourmand_alt",
+    "name": "Competitive Eating",
+    "description": "You were a professional eater before the Cataclysm and frequently participated in eating contests.  Thanks to your training you can eat huge amounts of food without getting sick, and while eating forty hot dogs in ten minutes might not be too useful in a world of zombies, your fortitude might help you survive off food other survivors would pass over.",
+    "points": 3,
+    "traits": [ "GOURMAND", "STRONGSTOMACH" ]
   },
   {
     "type": "profession",

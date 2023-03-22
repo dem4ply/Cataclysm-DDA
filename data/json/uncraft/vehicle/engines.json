@@ -35,7 +35,7 @@
       [ [ "motor_small", 1 ] ],
       [ [ "well_pump", 2 ] ],
       [ [ "power_supply", 1 ] ],
-      [ [ "cable", 40 ] ],
+      [ [ "cable", 30 ] ],
       [ [ "engine_block_tiny", 1 ] ],
       [ [ "metal_tank_little", 1 ] ],
       [ [ "motor_oil", 900 ] ]
@@ -53,13 +53,11 @@
       [ [ "drivebelt", 2 ] ],
       [ [ "filter_air", 1 ] ],
       [ [ "filter_liquid", 1 ] ],
-      [ [ "motor_small", 1 ] ],
+      [ [ "motor_tiny", 1 ] ],
       [ [ "well_pump", 2 ] ],
       [ [ "power_supply", 1 ] ],
-      [ [ "cable", 40 ] ],
-      [ [ "engine_block_tiny", 1 ] ],
-      [ [ "metal_tank_little", 1 ] ],
-      [ [ "motor_oil", 650 ] ]
+      [ [ "cable", 20 ] ],
+      [ [ "motor_oil", 350 ] ]
     ]
   },
   {
@@ -78,6 +76,29 @@
       [ [ "well_pump", 2 ] ],
       [ [ "power_supply", 1 ] ],
       [ [ "cable", 40 ] ],
+      [ [ "engine_block_small", 1 ] ],
+      [ [ "metal_tank_little", 1 ] ],
+      [ [ "motor_oil", 4700 ] ]
+    ]
+  },
+  {
+    "type": "uncraft",
+    "activity_level": "MODERATE_EXERCISE",
+    "result": "i4_diesel",
+    "skill_used": "mechanics",
+    "qualities": [ { "id": "SCREW", "level": 1 }, { "id": "WRENCH", "level": 1 }, { "id": "WRENCH_FINE", "level": 1 } ],
+    "difficulty": 4,
+    "time": "50 m",
+    "components": [
+      [ [ "drivebelt", 2 ] ],
+      [ [ "filter_air", 1 ] ],
+      [ [ "filter_liquid", 1 ] ],
+      [ [ "motor_small", 1 ] ],
+      [ [ "well_pump", 1 ] ],
+      [ [ "pump_complex", 1 ] ],
+      [ [ "power_supply", 1 ] ],
+      [ [ "cable", 40 ] ],
+      [ [ "glowplug", 1 ] ],
       [ [ "engine_block_small", 1 ] ],
       [ [ "metal_tank_little", 1 ] ],
       [ [ "motor_oil", 4700 ] ]
@@ -122,7 +143,7 @@
       [ [ "well_pump", 2 ] ],
       [ [ "power_supply", 1 ] ],
       [ [ "cable", 40 ] ],
-      [ [ "engine_block_tiny", 1 ] ],
+      [ [ "engine_block_small", 1 ] ],
       [ [ "metal_tank_little", 1 ] ],
       [ [ "motor_oil", 2200 ] ]
     ]

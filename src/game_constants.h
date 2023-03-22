@@ -4,6 +4,7 @@
 
 #include <map>
 #include <string>
+#include "units.h"
 
 // Fixed window sizes.
 static constexpr int EVEN_MINIMUM_TERM_WIDTH = 80;
@@ -21,7 +22,6 @@ static constexpr int LOCATION_WIDTH = 48;
 static constexpr int STATUS_HEIGHT = 4;
 static constexpr int STATUS_WIDTH = 55;
 
-static constexpr int BLINK_SPEED = 300;
 static constexpr int EXPLOSION_MULTIPLIER = 7;
 
 // Really just a sanity check for functions not tested beyond this. in theory 4096 works (`InvletInvlet).
@@ -89,25 +89,25 @@ static constexpr int PLUTONIUM_CHARGES = 500;
 namespace temperatures
 {
 // temperature at which something starts is considered HOT.
-constexpr int hot = 100; // ~ 38 Celsius
+constexpr units::temperature hot = units::from_fahrenheit( 100 ); // ~ 38 Celsius
 
 // the "normal" temperature midpoint between cold and hot.
-constexpr int normal = 70; // ~ 21 Celsius
+constexpr units::temperature normal = units::from_fahrenheit( 70 ); // ~ 21 Celsius
 
 // Temperature inside an active fridge in Fahrenheit.
-constexpr int fridge = 37; // ~ 2.7 Celsius
+constexpr units::temperature fridge = units::from_fahrenheit( 37 ); // ~ 2.7 Celsius
 
 // Temperature at which things are considered "cold".
-constexpr int cold = 40; // ~4.4 C
+constexpr units::temperature cold = units::from_fahrenheit( 40 ); // ~4.4 C
 
 // Temperature inside an active freezer in Fahrenheit.
-constexpr int freezer = 23; // -5 Celsius
+constexpr units::temperature freezer = units::from_celsius( -5 ); // -5 Celsius
 
-// Temperature in which water freezes in Fahrenheit.
-constexpr int freezing = 32; // 0 Celsius
+// Temperature in which water freezes.
+constexpr units::temperature freezing = units::from_celsius( 0 ); // 0 Celsius
 
-// Temperature in which water boils in Fahrenheit.
-constexpr int boiling = 212; // 100 Celsius
+// Temperature in which water boils.
+constexpr units::temperature boiling = units::from_celsius( 100 ); // 100 Celsius
 } // namespace temperatures
 
 // Slowest speed at which a gun can be aimed.
@@ -146,13 +146,13 @@ static constexpr int HORDE_VISIBILITY_SIZE = 3;
  * Average annual temperature in F used for climate, weather and temperature calculation.
  * Average New England temperature = 43F/6C rounded to int.
 */
-static constexpr int AVERAGE_ANNUAL_TEMPERATURE = 43;
+static constexpr units::temperature AVERAGE_ANNUAL_TEMPERATURE = units::from_fahrenheit( 43 );
 
 /**
  * Base starting spring temperature in F used for climate, weather and temperature calculation.
  * New England base spring temperature = 65F/18C rounded to int.
 */
-static constexpr int SPRING_TEMPERATURE = 65;
+static constexpr units::temperature SPRING_TEMPERATURE = units::from_fahrenheit( 65 );
 
 /**
  * Used to limit the random seed during noise calculation. A large value flattens the noise generator to zero.
@@ -202,16 +202,28 @@ const std::map<float, std::string> activity_levels_str_map = {
     { EXTRA_EXERCISE, "EXTRA_EXERCISE" }
 };
 
-// these are the lower bounds of each of the weight classes.
+// these are the lower bounds of each of the weight classes, determined by the amount of BMI coming from stored calories (fat)
 namespace character_weight_category
 {
-constexpr float emaciated = 14.0f;
-constexpr float underweight = 16.0f;
-constexpr float normal = 18.5f;
-constexpr float overweight = 25.0f;
-constexpr float obese = 30.0f;
-constexpr float very_obese = 35.0f;
-constexpr float morbidly_obese = 40.0f;
+constexpr float emaciated = 1.0f;
+constexpr float underweight = 2.0f;
+constexpr float normal = 3.0f;
+constexpr float overweight = 5.0f;
+constexpr float obese = 10.0f;
+constexpr float very_obese = 15.0f;
+constexpr float morbidly_obese = 20.0f;
 } // namespace character_weight_category
+
+// these are the lower bounds of each of the health classes.
+namespace character_health_category
+{
+//horrible
+constexpr int very_bad = -100;
+constexpr int bad = -50;
+constexpr int fine = -10;
+constexpr int good = 10;
+constexpr int very_good = 50;
+constexpr int great = 100;
+} // namespace character_health_category
 
 #endif // CATA_SRC_GAME_CONSTANTS_H

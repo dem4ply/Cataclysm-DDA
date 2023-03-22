@@ -4,11 +4,7 @@
 
 using namespace clang::ast_matchers;
 
-namespace clang
-{
-namespace tidy
-{
-namespace cata
+namespace clang::tidy::cata
 {
 
 static auto isStringIdType()
@@ -65,6 +61,7 @@ static std::string GetPrefixFor( const CXXRecordDecl *Type )
 {
     const ClassTemplateSpecializationDecl *CTSDecl =
         dyn_cast<ClassTemplateSpecializationDecl>( Type );
+    assert( CTSDecl ); // NOLINT(cata-assert)
     QualType ArgType = CTSDecl->getTemplateArgs()[0].getAsType();
     PrintingPolicy Policy( LangOptions{} );
     Policy.adjustForCPlusPlus();
@@ -539,6 +536,4 @@ void StaticStringIdConstantsCheck::check( const MatchFinder::MatchResult &Result
     CheckDeclRef( *this, Result );
 }
 
-} // namespace cata
-} // namespace tidy
-} // namespace clang
+} // namespace clang::tidy::cata

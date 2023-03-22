@@ -8,6 +8,7 @@
 #include <map>
 #include <memory>
 #include <new>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -18,11 +19,11 @@
 #include "cursesdef.h"
 #include "input.h"
 #include "memory_fast.h"
-#include "optional.h"
 #include "pimpl.h"
 #include "point.h"
 #include "string_formatter.h"
 
+class scrollbar;
 class translation;
 
 ////////////////////////////////////////////////////////////////////////////////////
@@ -60,9 +61,9 @@ struct uilist_entry {
     int retval;                 // return this int
     bool enabled;               // darken, and forbid scrolling if hilight_disabled is false
     bool force_color = false;   // Never darken this option
-    // cata::nullopt: automatically assign an unassigned hotkey
+    // std::nullopt: automatically assign an unassigned hotkey
     // input_event(): disable hotkey
-    cata::optional<input_event> hotkey;
+    std::optional<input_event> hotkey;
     std::string txt;            // what it says on the tin
     std::string desc;           // optional, possibly longer, description
     std::string ctxt;           // second column text
@@ -93,7 +94,7 @@ struct uilist_entry {
     * @param txt string that will be displayed on the entry first column
     * @param key hotkey character that when pressed will return this entry return value
     */
-    uilist_entry( const std::string &txt, const cata::optional<input_event> &key );
+    uilist_entry( const std::string &txt, const std::optional<input_event> &key );
     /**
     * @param retval return value of this option when selected during menu query
     * @param enable is entry enabled. disabled entries will be grayed out and won't be selectable
@@ -107,7 +108,7 @@ struct uilist_entry {
     * @param key hotkey character that when pressed will return this entry return value
     * @param txt string that will be displayed on the entry first column
     */
-    uilist_entry( int retval, bool enabled, const cata::optional<input_event> &key,
+    uilist_entry( int retval, bool enabled, const std::optional<input_event> &key,
                   const std::string &txt );
     /**
     * @param retval return value of this option when selected during menu query
@@ -118,6 +119,16 @@ struct uilist_entry {
     * @see uilist::desc_enabled
     */
     uilist_entry( int retval, bool enabled, int key, const std::string &txt, const std::string &desc );
+    /**
+    * @param retval return value of this option when selected during menu query
+    * @param enable is entry enabled. disabled entries will be grayed out and won't be selectable
+    * @param key hotkey character that when pressed will return this entry return value
+    * @param txt string that will be displayed on the entry first column
+    * @param desc entry description if menu desc_enabled is true
+    * @see uilist::desc_enabled
+    */
+    uilist_entry( int retval, bool enabled, const std::optional<input_event> &key,
+                  const std::string &txt, const std::string &desc );
     /**
     * @param retval return value of this option when selected during menu query
     * @param enable is entry enabled. disabled entries will be grayed out and won't be selectable
@@ -138,7 +149,7 @@ struct uilist_entry {
     * @param column string that will be displayed on the entry second column
     * @see uilist::desc_enabled
     */
-    uilist_entry( int retval, bool enabled, const cata::optional<input_event> &key,
+    uilist_entry( int retval, bool enabled, const std::optional<input_event> &key,
                   const std::string &txt, const std::string &desc,
                   const std::string &column );
     /**
@@ -157,7 +168,7 @@ struct uilist_entry {
         uilist_entry( static_cast<int>( e ), std::forward<Args>( args )... )
     {}
 
-    cata::optional<inclusive_rectangle<point>> drawn_rect;
+    std::optional<inclusive_rectangle<point>> drawn_rect;
 };
 
 /**
@@ -275,7 +286,7 @@ class uilist // NOLINT(cata-xy)
         void setup();
         // initialize the window or reposition it after screen size change.
         void reposition( ui_adaptor &ui );
-        void show();
+        void show( ui_adaptor &ui );
         bool scrollby( int scrollby );
         void query( bool loop = true, int timeout = -1 );
         void filterlist();
@@ -300,7 +311,7 @@ class uilist // NOLINT(cata-xy)
         * @param key hotkey character that when pressed will return this entry return value
         * @param txt string that will be displayed on the entry first column
         */
-        void addentry( int retval, bool enabled, const cata::optional<input_event> &key,
+        void addentry( int retval, bool enabled, const std::optional<input_event> &key,
                        const std::string &txt );
         /**
         * @param retval return value of this option when selected during menu query
@@ -336,6 +347,17 @@ class uilist // NOLINT(cata-xy)
         * @param enable is entry enabled. disabled entries will be grayed out and won't be selectable
         * @param key hotkey character that when pressed will return this entry return value
         * @param txt string that will be displayed on the entry first column
+        * @param desc entry description if menu desc_enabled is true
+        * @see uilist::desc_enabled
+        */
+        void addentry_desc( int retval, bool enabled, const std::optional<input_event> &key,
+                            const std::string &txt,
+                            const std::string &desc );
+        /**
+        * @param retval return value of this option when selected during menu query
+        * @param enable is entry enabled. disabled entries will be grayed out and won't be selectable
+        * @param key hotkey character that when pressed will return this entry return value
+        * @param txt string that will be displayed on the entry first column
         * @param column string that will be displayed on the entry second column
         * @param desc entry description if menu desc_enabled is true
         * @see uilist::desc_enabled
@@ -352,7 +374,7 @@ class uilist // NOLINT(cata-xy)
         * @param desc entry description if menu desc_enabled is true
         * @see uilist::desc_enabled
         */
-        void addentry_col( int retval, bool enabled, const cata::optional<input_event> &key,
+        void addentry_col( int retval, bool enabled, const std::optional<input_event> &key,
                            const std::string &txt, const std::string &column,
                            const std::string &desc = std::string() );
         void settext( const std::string &str );
@@ -374,10 +396,17 @@ class uilist // NOLINT(cata-xy)
 
     private:
         int scroll_amount_from_action( const std::string &action );
+        std::unique_ptr<scrollbar> uilist_scrollbar;
         void apply_scrollbar();
         // This function assumes it's being called from `query` and should
         // not be made public.
         void inputfilter();
+        enum class handle_mouse_result_t {
+            unhandled, handled, confirmed
+        };
+        handle_mouse_result_t handle_mouse( const input_context &ctxt,
+                                            const std::string &ret_act,
+                                            bool loop );
 
     public:
         // Parameters
@@ -475,6 +504,8 @@ class uilist // NOLINT(cata-xy)
 
         bool started = false;
 
+        bool recalc_start = false;
+
         int find_entry_by_coordinate( const point &p ) const;
 
     public:
@@ -501,5 +532,7 @@ class pointmenu_cb : public uilist_callback
         ~pointmenu_cb() override;
         void select( uilist *menu ) override;
 };
+
+void kill_advanced_inv();
 
 #endif // CATA_SRC_UI_H

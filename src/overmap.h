@@ -10,6 +10,7 @@
 #include <iosfwd>
 #include <iterator>
 #include <map>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -21,19 +22,20 @@
 #include "enums.h"
 #include "game_constants.h"
 #include "mapgendata.h"
+#include "mdarray.h"
 #include "memory_fast.h"
 #include "mongroup.h"
 #include "monster.h"
 #include "omdata.h"
-#include "optional.h"
 #include "overmap_types.h" // IWYU pragma: keep
 #include "point.h"
 #include "rng.h"
 #include "type_id.h"
 
-class JsonIn;
+class JsonArray;
 class JsonObject;
 class JsonOut;
+class cata_path;
 class character_id;
 class map_extra;
 class npc;
@@ -109,8 +111,8 @@ enum class radio_type : int {
 
 extern std::map<radio_type, std::string> radio_type_names;
 
-static constexpr int RADIO_MIN_STRENGTH = 80;
-static constexpr int RADIO_MAX_STRENGTH = 200;
+static constexpr int RADIO_MIN_STRENGTH = 120;
+static constexpr int RADIO_MAX_STRENGTH = 360;
 
 struct radio_tower {
     // local (to the containing overmap) submap coordinates
@@ -127,9 +129,9 @@ struct radio_tower {
 };
 
 struct map_layer {
-    oter_id terrain[OMAPX][OMAPY];
-    bool visible[OMAPX][OMAPY];
-    bool explored[OMAPX][OMAPY];
+    cata::mdarray<oter_id, point_om_omt> terrain;
+    cata::mdarray<bool, point_om_omt> visible;
+    cata::mdarray<bool, point_om_omt> explored;
     std::vector<om_note> notes;
     std::vector<om_map_extra> extras;
 };
@@ -198,7 +200,7 @@ struct pos_dir {
     pos_dir opposite() const;
 
     void serialize( JsonOut &jsout ) const;
-    void deserialize( JsonIn &jsin );
+    void deserialize( const JsonArray &ja );
 
     bool operator==( const pos_dir &r ) const;
     bool operator<( const pos_dir &r ) const;
@@ -249,11 +251,11 @@ class overmap
          * Returns @ref invalid_tripoint if no suitable place has been found.
          */
         tripoint_om_omt find_random_omt( const std::pair<std::string, ot_match_type> &target,
-                                         cata::optional<city> target_city = cata::nullopt ) const;
+                                         std::optional<city> target_city = std::nullopt ) const;
         tripoint_om_omt find_random_omt( const std::string &omt_base_type,
                                          ot_match_type match_type = ot_match_type::type,
-                                         cata::optional<city> target_city = cata::nullopt ) const {
-            return find_random_omt( std::make_pair( omt_base_type, match_type ), target_city );
+                                         std::optional<city> target_city = std::nullopt ) const {
+            return find_random_omt( std::make_pair( omt_base_type, match_type ), std::move( target_city ) );
         }
         /**
          * Return a vector containing the absolute coordinates of
@@ -261,17 +263,17 @@ class overmap
          * @returns A vector of terrain coordinates (absolute overmap terrain
          * coordinates), or empty vector if no matching terrain is found.
          */
-        std::vector<point_abs_omt> find_terrain( const std::string &term, int zlevel );
+        std::vector<point_abs_omt> find_terrain( const std::string &term, int zlevel ) const;
 
         void ter_set( const tripoint_om_omt &p, const oter_id &id );
         // ter has bounds checking, and returns ot_null when out of bounds.
         const oter_id &ter( const tripoint_om_omt &p ) const;
         // ter_unsafe is UB when out of bounds.
         const oter_id &ter_unsafe( const tripoint_om_omt &p ) const;
-        cata::optional<mapgen_arguments> *mapgen_args( const tripoint_om_omt & );
+        std::optional<mapgen_arguments> *mapgen_args( const tripoint_om_omt & );
         std::string *join_used_at( const om_pos_dir & );
         std::vector<oter_id> predecessors( const tripoint_om_omt & );
-        bool &seen( const tripoint_om_omt &p );
+        void set_seen( const tripoint_om_omt &p, bool val );
         bool seen( const tripoint_om_omt &p ) const;
         bool &explored( const tripoint_om_omt &p );
         bool is_explored( const tripoint_om_omt &p ) const;
@@ -286,6 +288,7 @@ class overmap
         bool has_extra( const tripoint_om_omt &p ) const;
         const map_extra_id &extra( const tripoint_om_omt &p ) const;
         void add_extra( const tripoint_om_omt &p, const map_extra_id &id );
+        void add_extra_note( const tripoint_om_omt &p );
         void delete_extra( const tripoint_om_omt &p );
 
         /**
@@ -359,15 +362,11 @@ class overmap
         std::vector<basecamp> camps;
         std::vector<city> cities;
         std::map<string_id<overmap_connection>, std::vector<tripoint_om_omt>> connections_out;
-        cata::optional<basecamp *> find_camp( const point_abs_omt &p );
+        std::optional<basecamp *> find_camp( const point_abs_omt &p );
         /// Adds the npc to the contained list of npcs ( @ref npcs ).
         void insert_npc( const shared_ptr_fast<npc> &who );
         /// Removes the npc and returns it ( or returns nullptr if not found ).
         shared_ptr_fast<npc> erase_npc( const character_id &id );
-
-        void for_each_npc( const std::function<void( npc & )> &callback );
-        void for_each_npc( const std::function<void( const npc & )> &callback ) const;
-
         shared_ptr_fast<npc> find_npc( const character_id &id ) const;
         shared_ptr_fast<npc> find_npc_by_unique_id( const std::string &id ) const;
         const std::vector<shared_ptr_fast<npc>> &get_npcs() const {
@@ -405,14 +404,14 @@ class overmap
         // Records mapgen parameters required at the overmap special level
         // These are lazily evaluated; empty optional means that they have yet
         // to be evaluated.
-        cata::colony<cata::optional<mapgen_arguments>> mapgen_arg_storage;
-        std::unordered_map<tripoint_om_omt, cata::optional<mapgen_arguments> *> mapgen_args_index;
+        cata::colony<std::optional<mapgen_arguments>> mapgen_arg_storage;
+        std::unordered_map<tripoint_om_omt, std::optional<mapgen_arguments> *> mapgen_args_index;
 
         // Records the joins that were chosen during placement of a mutable
         // special, so that it can be queried later by mapgen
         std::unordered_map<om_pos_dir, std::string> joins_used;
 
-        pimpl<regional_settings> settings;
+        const regional_settings *settings;
 
         oter_id get_default_terrain( int z ) const;
 
@@ -431,11 +430,13 @@ class overmap
         std::unordered_multimap<tripoint_om_sm, monster> monster_map;
 
         // parse data in an opened overmap file
-        void unserialize( std::istream &fin );
+        void unserialize( const cata_path &file_name, std::istream &fin );
+        void unserialize( const JsonObject &jsobj );
         // parse data in an opened omap file
-        void unserialize_omap( std::istream &fin );
+        void unserialize_omap( const JsonValue &jsin, const cata_path &json_path );
         // Parse per-player overmap view data.
-        void unserialize_view( std::istream &fin );
+        void unserialize_view( const cata_path &file_name, std::istream &fin );
+        void unserialize_view( const JsonObject &jsobj );
         // Save data in an opened overmap file
         void serialize( std::ostream &fout ) const;
         // Save per-player overmap view data.
@@ -504,10 +505,10 @@ class overmap
     public:
         void build_connection(
             const overmap_connection &connection, const pf::directed_path<point_om_omt> &path, int z,
-            const om_direction::type &initial_dir = om_direction::type::invalid );
+            cube_direction initial_dir = cube_direction::last );
         void build_connection( const point_om_omt &source, const point_om_omt &dest, int z,
                                const overmap_connection &connection, bool must_be_unexplored,
-                               const om_direction::type &initial_dir = om_direction::type::invalid );
+                               cube_direction initial_dir = cube_direction::last );
         void connect_closest_points( const std::vector<point_om_omt> &points, int z,
                                      const overmap_connection &connection );
         // Polishing
@@ -515,7 +516,7 @@ class overmap
                        const tripoint_om_omt &p ) const;
         bool check_overmap_special_type( const overmap_special_id &id,
                                          const tripoint_om_omt &location ) const;
-        cata::optional<overmap_special_id> overmap_special_at( const tripoint_om_omt &p ) const;
+        std::optional<overmap_special_id> overmap_special_at( const tripoint_om_omt &p ) const;
         void chip_rock( const tripoint_om_omt &p );
 
         void polish_river();
@@ -561,11 +562,12 @@ class overmap
         void place_radios();
 
         void add_mon_group( const mongroup &group );
+        void add_mon_group( const mongroup &group, int radius );
         // Spawns a new mongroup (to be called by worldgen code)
-        void spawn_mon_group( const mongroup &group );
+        void spawn_mon_group( const mongroup &group, int radius );
 
-        void load_monster_groups( JsonIn &jsin );
-        void load_legacy_monstergroups( JsonIn &jsin );
+        void load_monster_groups( const JsonArray &jsin );
+        void load_legacy_monstergroups( const JsonArray &jsin );
         void save_monster_groups( JsonOut &jo ) const;
     public:
         static void load_obsolete_terrains( const JsonObject &jo );

@@ -16,7 +16,6 @@
 #include "coordinates.h"
 #include "enums.h"
 #include "game_constants.h"
-#include "json.h"
 #include "magic_teleporter_list.h"
 #include "memory_fast.h"
 #include "point.h"
@@ -29,6 +28,8 @@ class diary;
 class faction;
 class item;
 class item_location;
+class JsonObject;
+class JsonOut;
 class mission;
 class monster;
 class nc_color;
@@ -62,11 +63,17 @@ struct monster_visible_info {
     // 7 0 1    unique_types uses these indices;
     // 6 8 2    0-7 are provide by direction_from()
     // 5 4 3    8 is used for local monsters (for when we explain them below)
-    std::vector<npc *> unique_types[9];
-    std::vector<std::pair<const mtype *, int>> unique_mons[9];
+    std::array<std::vector<npc *>, 9> unique_types;
+    std::array<std::vector<std::pair<const mtype *, int>>, 9> unique_mons;
 
     // If the monster visible in this direction is dangerous
-    bool dangerous[8] = {};
+    std::array<bool, 8> dangerous = {};
+
+    // Whether or not there is at last one creature within safemode proximity that
+    // is dangerous
+    bool has_dangerous_creature_in_proximity = false;
+
+    void remove_npc( npc *n );
 };
 
 class avatar : public Character
@@ -76,7 +83,7 @@ class avatar : public Character
         avatar( const avatar & ) = delete;
         // NOLINTNEXTLINE(performance-noexcept-move-constructor)
         avatar( avatar && );
-        ~avatar();
+        ~avatar() override;
         avatar &operator=( const avatar & ) = delete;
         // NOLINTNEXTLINE(performance-noexcept-move-constructor)
         avatar &operator=( avatar && );
@@ -92,6 +99,7 @@ class avatar : public Character
         bool create( character_type type, const std::string &tempname = "" );
         void add_profession_items();
         void randomize( bool random_scenario, bool play_now = false );
+        void randomize_cosmetics();
         bool load_template( const std::string &template_name, pool_type & );
         void save_template( const std::string &name, pool_type );
         void character_to_template( const std::string &name );
@@ -118,16 +126,16 @@ class avatar : public Character
          * Makes the avatar "take over" the given NPC, while the current avatar character
          * becomes an NPC.
          */
-        void control_npc( npc & );
+        void control_npc( npc &, bool debug = false );
         /**
          * Open a menu to choose the NPC to take over.
          */
-        void control_npc_menu();
+        void control_npc_menu( bool debug = false );
         using Character::query_yn;
         bool query_yn( const std::string &mes ) const override;
 
         void toggle_map_memory();
-        bool should_show_map_memory();
+        bool should_show_map_memory() const;
         void prepare_map_memory_region( const tripoint &p1, const tripoint &p2 );
         /** Memorizes a given tile in tiles mode; finalize_tile_memory needs to be called after it */
         void memorize_tile( const tripoint &pos, const std::string &ter, int subtile,
@@ -178,12 +186,14 @@ class avatar : public Character
          */
         void on_mission_finished( mission &cur_mission );
 
+        void remove_active_mission( mission &cur_mission );
+
         //return avatar diary
         diary *get_avatar_diary();
 
         // Dialogue and bartering--see npctalk.cpp
         void talk_to( std::unique_ptr<talker> talk_with, bool radio_contact = false,
-                      bool is_computer = false );
+                      bool is_computer = false, bool is_not_conversation = false );
 
         /**
          * Try to disarm the NPC. May result in fail attempt, you receiving the weapon and instantly wielding it,
@@ -214,13 +224,11 @@ class avatar : public Character
         bool has_seen_snippet( const snippet_id &snippet ) const;
         const std::set<snippet_id> &get_snippets();
 
-        // the encumbrance on your limbs reducing your dodging ability
-        int limb_dodge_encumbrance() const;
 
         /**
          * Opens the targeting menu to pull a nearby creature towards the character.
          * @param name Name of the implement used to pull the creature. */
-        void longpull( std::string name );
+        void longpull( const std::string &name );
 
         void wake_up() override;
         // Grab furniture / vehicle
@@ -264,6 +272,8 @@ class avatar : public Character
 
         // Cycles to the next move mode.
         void cycle_move_mode();
+        // Cycles to the previous move mode.
+        void cycle_move_mode_reverse();
         // Resets to walking.
         void reset_move_mode();
         // Toggles running on/off.
@@ -302,43 +312,20 @@ class avatar : public Character
             int spent = 0;
             int gained = 0;
             int ingested = 0;
-            int total() const {
+            int total() const noexcept {
                 return gained - spent;
             }
             std::map<float, int> activity_levels; // NOLINT(cata-serialize)
 
-            void serialize( JsonOut &json ) const {
-                json.start_object();
+            daily_calories();
 
-                json.member( "spent", spent );
-                json.member( "gained", gained );
-                json.member( "ingested", ingested );
-                save_activity( json );
-
-                json.end_object();
-            }
-            void deserialize( const JsonObject &data ) {
-                data.read( "spent", spent );
-                data.read( "gained", gained );
-                data.read( "ingested", ingested );
-                if( data.has_member( "activity" ) ) {
-                    read_activity( data );
-                }
-            }
-
-            daily_calories() {
-                activity_levels.emplace( NO_EXERCISE, 0 );
-                activity_levels.emplace( LIGHT_EXERCISE, 0 );
-                activity_levels.emplace( MODERATE_EXERCISE, 0 );
-                activity_levels.emplace( BRISK_EXERCISE, 0 );
-                activity_levels.emplace( ACTIVE_EXERCISE, 0 );
-                activity_levels.emplace( EXTRA_EXERCISE, 0 );
-            }
+            void serialize( JsonOut &json ) const;
+            void deserialize( const JsonObject &data );
 
             void save_activity( JsonOut &json ) const;
             void read_activity( const JsonObject &data );
-
         };
+
         // called once a day; adds a new daily_calories to the
         // front of the list and pops off the back if there are more than 30
         void advance_daily_calories();
@@ -356,10 +343,15 @@ class avatar : public Character
 
         int movecounter = 0;
 
+        // bionic power in the last turn
+        units::energy power_prev_turn = 0_kJ;
+        // balance/net power generation/loss during the last turn
+        units::energy power_balance = 0_kJ;
+
         // amount of turns since last check for pocket noise
         time_point last_pocket_noise = time_point( 0 );
 
-        vproto_id starting_vehicle;
+        vproto_id starting_vehicle = vproto_id::NULL_ID();
         std::vector<mtype_id> starting_pets;
         std::set<character_id> follower_ids;
 
@@ -420,7 +412,7 @@ class avatar : public Character
         std::unique_ptr<npc> shadow_npc;
 
         // true when the space is still visible when aiming
-        bool aim_cache[MAPSIZE_X][MAPSIZE_Y];
+        cata::mdarray<bool, point_bub_ms> aim_cache;
 };
 
 avatar &get_avatar();

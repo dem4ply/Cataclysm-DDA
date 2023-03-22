@@ -37,6 +37,11 @@ tripoint talker_monster::pos() const
     return me_mon->pos();
 }
 
+tripoint_abs_ms talker_monster::global_pos() const
+{
+    return me_mon->get_location();
+}
+
 tripoint_abs_omt talker_monster::global_omt_location() const
 {
     return me_mon->global_omt_location();
@@ -58,7 +63,8 @@ effect talker_monster::get_effect( const efftype_id &effect_id, const bodypart_i
 }
 
 void talker_monster::add_effect( const efftype_id &new_effect, const time_duration &dur,
-                                 std::string bp, bool permanent, bool force, int intensity )
+                                 const std::string &bp, bool permanent, bool force,
+                                 int intensity )
 {
     me_mon->add_effect( new_effect, dur, bodypart_str_id( bp ), permanent, intensity, force );
 }
@@ -126,6 +132,11 @@ void talker_monster::set_friendly( int new_val )
 std::vector<std::string> talker_monster::get_topics( bool )
 {
     return me_mon->type->chat_topics;
+}
+
+int talker_monster::get_cur_hp( const bodypart_id & ) const
+{
+    return me_mon->get_hp();
 }
 
 bool talker_monster::will_talk_to_u( const Character &you, bool )

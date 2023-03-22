@@ -4,17 +4,17 @@
 
 using namespace clang::ast_matchers;
 
-namespace clang
-{
-namespace tidy
-{
-namespace cata
+namespace clang::tidy::cata
 {
 
 void StaticDeclarationsCheck::registerMatchers( MatchFinder *Finder )
 {
     Finder->addMatcher(
-        declaratorDecl( hasParent( translationUnitDecl() ) ).bind( "decl" ),
+        declaratorDecl(
+            hasParent(
+                decl( anyOf( translationUnitDecl(), namespaceDecl().bind( "namespace" ) ) )
+            )
+        ).bind( "decl" ),
         this
     );
 }
@@ -26,6 +26,7 @@ static void CheckDecl( StaticDeclarationsCheck &Check,
     if( !ThisDecl ) {
         return;
     }
+    const NamespaceDecl *IsInNamespace = Result.Nodes.getNodeAs<NamespaceDecl>( "namespace" );
 
     const SourceManager &SM = *Result.SourceManager;
 
@@ -36,6 +37,11 @@ static void CheckDecl( StaticDeclarationsCheck &Check,
 
     // Ignore cases that are not the first declaration
     if( ThisDecl->getPreviousDecl() ) {
+        return;
+    }
+
+    // Ignore cases that are in anonymous namespaces
+    if( ThisDecl->isInAnonymousNamespace() ) {
         return;
     }
 
@@ -65,11 +71,12 @@ static void CheckDecl( StaticDeclarationsCheck &Check,
             "Prefer including a header to making a local extern declaration of %0."
         ) << ThisDecl;
     } else {
+        std::string Context = IsInNamespace ? "Namespace-level" : "Global";
         Check.diag(
             ThisDecl->getBeginLoc(),
-            "Global declaration of %0 in a cpp file should be static or have a previous "
+            "%0 declaration of %1 in a cpp file should be static or have a previous "
             "declaration in a header."
-        ) << ThisDecl <<
+        ) << Context << ThisDecl <<
           FixItHint::CreateInsertion( ThisDecl->getSourceRange().getBegin(), "static " );
     }
 }
@@ -79,6 +86,4 @@ void StaticDeclarationsCheck::check( const MatchFinder::MatchResult &Result )
     CheckDecl( *this, Result );
 }
 
-} // namespace cata
-} // namespace tidy
-} // namespace clang
+} // namespace clang::tidy::cata
