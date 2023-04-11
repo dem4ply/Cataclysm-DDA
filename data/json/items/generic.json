@@ -171,6 +171,27 @@
   },
   {
     "type": "GENERIC",
+    "id": "melchior_science_doc",
+    "copy-from": "log_immersion27",
+    "name": { "str": "MELCHIOR report" },
+    "snippet_category": "melchior_science_doc"
+  },
+  {
+    "type": "GENERIC",
+    "id": "msu14_password",
+    "name": { "str": "annotated paper scrap" },
+    "category": "books",
+    "description": "A small scrap of paper with two long character sequences scribbled on it.",
+    "weight": "1 g",
+    "to_hit": -3,
+    "color": "white",
+    "symbol": ",",
+    "material": [ "paper" ],
+    "volume": "4 ml",
+    "flags": [ "TRADER_AVOID" ]
+  },
+  {
+    "type": "GENERIC",
     "id": "small_printout_portal_storm_data",
     "name": { "str": "short NRE printout" },
     "category": "books",
@@ -464,6 +485,22 @@
     "price": 200000,
     "price_postapoc": 1000,
     "material": [ "wool" ],
+    "symbol": ",",
+    "color": "white"
+  },
+  {
+    "id": "bundle_nylon",
+    "type": "GENERIC",
+    "category": "spare_parts",
+    "name": { "str": "bundle of synthetic fabric", "str_pl": "bundles of synthetic fabric" },
+    "description": "Fifty synthetic fabric patches, bundled tightly together for storage.  Disassemble to unpack.",
+    "//": "Weight is 50 x 5750mg per patch",
+    "weight": "287500 mg",
+    "//2": "Volume is 50 x 5ml per patch",
+    "volume": "250ml",
+    "price": 0,
+    "price_postapoc": 500,
+    "material": [ "nylon" ],
     "symbol": ",",
     "color": "white"
   },
@@ -839,7 +876,7 @@
     "description": "A length of thin, relatively stiff steel wire.  Like the sort you find in chain link fences.",
     "category": "spare_parts",
     "price": 20000,
-    "price_postapoc": 100,
+    "price_postapoc": 10,
     "material": [ "steel" ],
     "weight": "151 g",
     "volume": "100 ml",
@@ -1964,9 +2001,9 @@
     "id": "motor_micro",
     "symbol": ",",
     "color": "light_gray",
-    "name": { "str": "micro motor" },
+    "name": { "str": "micro electric motor" },
     "category": "spare_parts",
-    "description": "A very small electric motor like those used in RC cars.  Useful in lots of electronics recipes.",
+    "description": "A very small electric motor like those used in RC cars or electric hair trimmers.",
     "price": 1000,
     "price_postapoc": 25,
     "material": [ "steel", "plastic" ],
@@ -3540,7 +3577,7 @@
     "bashing": 4,
     "cutting": 4,
     "to_hit": -3,
-    "flags": [ "TRADER_AVOID", "NO_REPAIR" ]
+    "flags": [ "TRADER_AVOID", "NO_REPAIR", "NO_SALVAGE" ]
   },
   {
     "type": "GENERIC",
@@ -3603,7 +3640,7 @@
     "bashing": 4,
     "cutting": 4,
     "to_hit": -3,
-    "flags": [ "TRADER_AVOID", "NO_REPAIR" ]
+    "flags": [ "TRADER_AVOID", "NO_REPAIR", "NO_SALVAGE" ]
   },
   {
     "type": "GENERIC",
@@ -3621,7 +3658,7 @@
     "bashing": 4,
     "cutting": 4,
     "to_hit": -3,
-    "flags": [ "TRADER_AVOID", "NO_REPAIR" ]
+    "flags": [ "TRADER_AVOID", "NO_REPAIR", "NO_SALVAGE" ]
   },
   {
     "type": "GENERIC",
