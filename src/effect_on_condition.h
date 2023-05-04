@@ -48,8 +48,8 @@ struct effect_on_condition {
         effect_on_condition_id id;
         std::vector<std::pair<effect_on_condition_id, mod_id>> src;
         eoc_type type;
-        std::function<bool( const dialogue & )> condition;
-        std::function<bool( const dialogue & )> deactivate_condition;
+        std::function<bool( dialogue & )> condition;
+        std::function<bool( dialogue & )> deactivate_condition;
         talk_effect_t true_effect;
         talk_effect_t false_effect;
         bool has_deactivate_condition = false;
@@ -61,7 +61,7 @@ struct effect_on_condition {
         bool check_deactivate( dialogue &d ) const;
         bool test_condition( dialogue &d ) const;
         void apply_true_effects( dialogue &d ) const;
-        void load( const JsonObject &jo, const std::string &src );
+        void load( const JsonObject &jo, std::string_view src );
         void finalize();
         void check() const;
         effect_on_condition() = default;
