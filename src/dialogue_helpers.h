@@ -33,6 +33,8 @@ struct talk_effect_fun_t {
         void set_remove_effect( const JsonObject &jo, const std::string &member, bool is_npc = false );
         void set_add_trait( const JsonObject &jo, const std::string &member, bool is_npc = false );
         void set_remove_trait( const JsonObject &jo, const std::string &member, bool is_npc = false );
+        void set_activate_trait( const JsonObject &jo, const std::string &member, bool is_npc = false );
+        void set_deactivate_trait( const JsonObject &jo, const std::string &member, bool is_npc = false );
         void set_learn_martial_art( const JsonObject &jo, const std::string &member, bool is_npc = false );
         void set_forget_martial_art( const JsonObject &jo, const std::string &member, bool is_npc = false );
         void set_mutate( const JsonObject &jo, const std::string &member, bool is_npc = false );
@@ -58,6 +60,7 @@ struct talk_effect_fun_t {
         void set_mod_healthy( const JsonObject &jo, const std::string &member, bool is_npc );
         void set_cast_spell( const JsonObject &jo, std::string_view member, bool is_npc,
                              bool targeted = false );
+        void set_die( bool is_npc );
         void set_lightning();
         void set_next_weather();
         void set_hp( const JsonObject &jo, const std::string &member, bool is_npc );
@@ -99,7 +102,8 @@ struct talk_effect_fun_t {
         void set_add_mission( const JsonObject &jo, const std::string &member );
         const std::vector<std::pair<int, itype_id>> &get_likely_rewards() const;
         void set_u_buy_monster( const JsonObject &jo, const std::string &member );
-        void set_u_learn_recipe( const JsonObject &jo, const std::string &member );
+        void set_learn_recipe( const JsonObject &jo, const std::string &member, bool is_npc = false );
+        void set_forget_recipe( const JsonObject &jo, const std::string &member, bool is_npc = false );
         void set_npc_first_topic( const JsonObject &jo, const std::string &member );
         void set_add_morale( const JsonObject &jo, const std::string &member, bool is_npc );
         void set_lose_morale( const JsonObject &jo, const std::string &member, bool is_npc );
@@ -108,6 +112,7 @@ struct talk_effect_fun_t {
         void set_arithmetic( const JsonObject &jo, std::string_view member, bool no_result );
         void set_math( const JsonObject &jo, std::string_view member );
         void set_set_string_var( const JsonObject &jo, const std::string &member );
+        void set_set_condition( const JsonObject &jo, const std::string &member );
         void set_custom_light_level( const JsonObject &jo, const std::string &member );
         void set_spawn_monster( const JsonObject &jo, const std::string &member, bool is_npc );
         void set_spawn_npc( const JsonObject &jo, const std::string &member, bool is_npc );
@@ -141,6 +146,7 @@ struct str_or_var {
     std::optional<std::string> str_val;
     std::optional<var_info> var_val;
     std::optional<std::string> default_val;
+    std::optional<std::function<std::string( const dialogue & )>> function;
     std::string evaluate( dialogue const &d ) const;
 };
 
@@ -167,13 +173,19 @@ struct eoc_math {
 
         invalid,
     };
+    enum class type_t : int {
+        ret = 0,
+        compare,
+        assign,
+    };
     std::shared_ptr<math_exp> lhs;
     std::shared_ptr<math_exp> mhs;
     std::shared_ptr<math_exp> rhs;
     eoc_math::oper action = oper::invalid;
 
-    void from_json( const JsonObject &jo, std::string_view member );
+    void from_json( const JsonObject &jo, std::string_view member, type_t type_ );
     double act( dialogue &d ) const;
+    void _validate_type( JsonArray const &objects, type_t type_ ) const;
 };
 
 struct dbl_or_var_part {

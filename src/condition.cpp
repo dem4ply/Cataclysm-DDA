@@ -132,7 +132,7 @@ dbl_or_var_part get_dbl_or_var_part( const JsonValue &jv, const std::string &mem
             ret_val.arithmetic_val = arith;
         } else if( jo.has_array( "math" ) ) {
             ret_val.math_val.emplace();
-            ret_val.math_val->from_json( jo, "math" );
+            ret_val.math_val->from_json( jo, "math", eoc_math::type_t::ret );
         } else {
             ret_val.var_val = read_var_info( jo );
         }
@@ -186,7 +186,7 @@ duration_or_var_part get_duration_or_var_part( const JsonValue &jv, const std::s
             ret_val.arithmetic_val = arith;
         } else if( jo.has_array( "math" ) ) {
             ret_val.math_val.emplace();
-            ret_val.math_val->from_json( jo, "math" );
+            ret_val.math_val->from_json( jo, "math", eoc_math::type_t::ret );
         } else {
             ret_val.var_val = read_var_info( jo );
         }
@@ -226,8 +226,14 @@ str_or_var get_str_or_var( const JsonValue &jv, const std::string &member, bool 
     if( jv.test_string() ) {
         ret_val.str_val = jv.get_string();
     } else if( jv.test_object() ) {
-        ret_val.var_val = read_var_info( jv.get_object() );
-        ret_val.default_val = default_val;
+        const JsonObject &jo = jv.get_object();
+        if( jo.has_member( "mutator" ) ) {
+            // if we have a mutator then process that here.
+            ret_val.function = conditional_t::get_get_string( jo );
+        } else {
+            ret_val.var_val = read_var_info( jo );
+            ret_val.default_val = default_val;
+        }
     } else if( required ) {
         jv.throw_error( "No valid value for " + member );
     } else {
@@ -440,6 +446,26 @@ void conditional_t::set_has_flag( const JsonObject &jo, const std::string &membe
     };
 }
 
+void conditional_t::set_has_species( const JsonObject &jo, const std::string &member,
+                                     bool is_npc )
+{
+    str_or_var species_to_check = get_str_or_var( jo.get_member( member ), member, true );
+    condition = [species_to_check, is_npc]( dialogue const & d ) {
+        const talker *actor = d.actor( is_npc );
+        return actor->has_species( species_id( species_to_check.evaluate( d ) ) );
+    };
+}
+
+void conditional_t::set_bodytype( const JsonObject &jo, const std::string &member,
+                                  bool is_npc )
+{
+    str_or_var bt_to_check = get_str_or_var( jo.get_member( member ), member, true );
+    condition = [bt_to_check, is_npc]( dialogue const & d ) {
+        const talker *actor = d.actor( is_npc );
+        return actor->bodytype( bodytype_id( bt_to_check.evaluate( d ) ) );
+    };
+}
+
 void conditional_t::set_has_activity( bool is_npc )
 {
     condition = [is_npc]( dialogue const & d ) {
@@ -582,8 +608,8 @@ void conditional_t::set_has_items( const JsonObject &jo, const std::string_view 
                                    bool is_npc )
 {
     JsonObject has_items = jo.get_object( member );
-    if( !has_items.has_string( "item" ) || ( !has_items.has_int( "count" ) &&
-            !has_items.has_int( "charges" ) ) ) {
+    if( !has_items.has_member( "item" ) || ( !has_items.has_member( "count" ) &&
+            !has_items.has_member( "charges" ) ) ) {
         condition = []( dialogue const & ) {
             return false;
         };
@@ -761,6 +787,14 @@ void conditional_t::set_has_var( const JsonObject &jo, const std::string &member
     const std::string var_name = get_talk_varname( jo, member, false, empty );
     const std::string &value = jo.has_member( "value" ) ? jo.get_string( "value" ) : std::string();
     const bool time_check = jo.has_member( "time" ) && jo.get_bool( "time" );
+    if( !time_check && !jo.has_member( "value" ) ) {
+        jo.throw_error( R"(Missing field: "value" or "time")" );
+        condition = []( dialogue const & ) {
+            return false;
+        };
+        return;
+    }
+
     condition = [var_name, value, time_check, is_npc]( dialogue const & d ) {
         const talker *actor = d.actor( is_npc );
         if( time_check ) {
@@ -782,7 +816,7 @@ void conditional_t::set_expects_vars( const JsonObject &jo, const std::string &m
     condition = [to_check]( dialogue const & d ) {
         std::string missing_variables;
         for( const str_or_var &val : to_check ) {
-            if( d.get_context().find( val.evaluate( d ) ) == d.get_context().end() ) {
+            if( d.get_context().find( "npctalk_var_" + val.evaluate( d ) ) == d.get_context().end() ) {
                 missing_variables += val.evaluate( d ) + ", ";
             }
         }
@@ -1353,6 +1387,22 @@ void conditional_t::set_compare_string( const JsonObject &jo, const std::string 
     };
 }
 
+void conditional_t::set_get_condition( const JsonObject &jo, const std::string &member )
+{
+    str_or_var conditionalToGet = get_str_or_var( jo.get_member( member ), member, true );
+    condition = [conditionalToGet]( dialogue & d ) {
+        return d.evaluate_conditional( conditionalToGet.evaluate( d ), d );
+    };
+}
+
+void conditional_t::set_get_option( const JsonObject &jo, const std::string &member )
+{
+    str_or_var optionToGet = get_str_or_var( jo.get_member( member ), member, true );
+    condition = [optionToGet]( dialogue & d ) {
+        return get_option<bool>( optionToGet.evaluate( d ) );
+    };
+}
+
 void conditional_t::set_compare_num( const JsonObject &jo, const std::string_view member )
 {
     JsonArray objects = jo.get_array( member );
@@ -1404,9 +1454,29 @@ void conditional_t::set_compare_num( const JsonObject &jo, const std::string_vie
 void conditional_t::set_math( const JsonObject &jo, const std::string_view member )
 {
     eoc_math math;
-    math.from_json( jo, member );
+    math.from_json( jo, member, eoc_math::type_t::compare );
     condition = [math = std::move( math )]( dialogue & d ) {
         return math.act( d );
+    };
+}
+
+std::function<std::string( const dialogue & )> conditional_t::get_get_string( const JsonObject &jo )
+{
+    if( jo.get_string( "mutator" ) == "mon_faction" ) {
+        str_or_var mtypeid = get_str_or_var( jo.get_member( "mtype_id" ), "mtype_id" );
+        return [mtypeid]( const dialogue & d ) {
+            return ( static_cast<mtype_id>( mtypeid.evaluate( d ) ) )->default_faction.str();
+        };
+    } else if( jo.get_string( "mutator" ) == "game_option" ) {
+        str_or_var option = get_str_or_var( jo.get_member( "option" ), "option" );
+        return [option]( const dialogue & d ) {
+            return get_option<std::string>( option.evaluate( d ) );
+        };
+    }
+
+    jo.throw_error( "unrecognized string mutator in " + jo.str() );
+    return []( const dialogue & ) {
+        return "INVALID";
     };
 }
 
@@ -1497,25 +1567,6 @@ std::function<double( dialogue & )> conditional_t::get_get_dbl( J const &jo )
         return [max_value]( dialogue const & ) {
             return rng( 0, max_value );
         };
-    } else if( jo.has_member( "weather" ) ) {
-        std::string weather_aspect = jo.get_string( "weather" );
-        if( weather_aspect == "temperature" ) {
-            return []( dialogue const & ) {
-                return static_cast<int>( units::to_fahrenheit( get_weather().weather_precise->temperature ) );
-            };
-        } else if( weather_aspect == "windpower" ) {
-            return []( dialogue const & ) {
-                return static_cast<int>( get_weather().weather_precise->windpower );
-            };
-        } else if( weather_aspect == "humidity" ) {
-            return []( dialogue const & ) {
-                return static_cast<int>( get_weather().weather_precise->humidity );
-            };
-        } else if( weather_aspect == "pressure" ) {
-            return []( dialogue const & ) {
-                return static_cast<int>( get_weather().weather_precise->pressure );
-            };
-        }
     } else if( jo.has_member( "faction_trust" ) ) {
         str_or_var name = get_str_or_var( jo.get_member( "faction_trust" ), "faction_trust" );
         return [name]( dialogue const & d ) {
@@ -1867,6 +1918,14 @@ std::function<double( dialogue & )> conditional_t::get_get_dbl( J const &jo )
             return [is_npc]( dialogue const & d ) {
                 return d.actor( is_npc )->get_bmi_permil();
             };
+        } else if( checked_value == "size" ) {
+            return [is_npc]( dialogue const & d ) {
+                return d.actor( is_npc )->get_size();
+            };
+        } else if( checked_value == "grab_strength" ) {
+            return [is_npc]( dialogue const & d ) {
+                return d.actor( is_npc )->get_grab_strength();
+            };
         } else if( checked_value == "fine_detail_vision_mod" ) {
             return [is_npc]( dialogue const & d ) {
                 return d.actor( is_npc )->get_fine_detail_vision_mod();
@@ -1898,45 +1957,6 @@ std::function<double( dialogue & )> conditional_t::get_get_dbl( J const &jo )
         } else if( checked_value == "npc_anger" ) {
             return [is_npc]( dialogue const & d ) {
                 return d.actor( is_npc )->get_npc_anger();
-            };
-        } else if( checked_value == "monsters_nearby" ) {
-            std::optional<var_info> target_var;
-            if( jo.has_object( "target_var" ) ) {
-                read_var_info( jo.get_member( "target_var" ) );
-            }
-            str_or_var id;
-            if( jo.has_member( "id" ) ) {
-                id = get_str_or_var( jo.get_member( "id" ), "id", false, "" );
-            } else {
-                id.str_val = "";
-            }
-            dbl_or_var radius_dov;
-            dbl_or_var number_dov;
-            if constexpr( std::is_same_v<JsonObject, J> ) {
-                radius_dov = get_dbl_or_var( jo, "radius", false, 10000 );
-                number_dov = get_dbl_or_var( jo, "number", false, 1 );
-            }
-            return [target_var, radius_dov, id, number_dov, is_npc]( dialogue & d ) {
-                tripoint_abs_ms loc;
-                if( target_var.has_value() ) {
-                    loc = get_tripoint_from_var( target_var, d );
-                } else {
-                    loc = d.actor( is_npc )->global_pos();
-                }
-
-                int radius = radius_dov.evaluate( d );
-                std::vector<Creature *> targets = g->get_creatures_if( [&radius, id, &d,
-                         loc]( const Creature & critter ) {
-                    if( critter.is_monster() ) {
-                        // friendly to the player, not a target for us
-                        return critter.as_monster()->friendly == 0 &&
-                               radius >= rl_dist( critter.get_location(), loc ) &&
-                               ( id.evaluate( d ).empty() ||
-                                 critter.as_monster()->type->id == mtype_id( id.evaluate( d ) ) );
-                    }
-                    return false;
-                } );
-                return static_cast<int>( targets.size() );
             };
         } else if( checked_value == "spell_level" ) {
             if( jo.has_member( "school" ) ) {
@@ -2057,7 +2077,7 @@ std::function<double( dialogue & )> conditional_t::get_get_dbl( J const &jo )
         // no recursive math through shim
         if constexpr( std::is_same_v<JsonObject, J> ) {
             eoc_math math;
-            math.from_json( jo, "math" );
+            math.from_json( jo, "math", eoc_math::type_t::ret );
             return [math = std::move( math )]( dialogue & d ) {
                 return math.act( d );
             };
@@ -2141,31 +2161,6 @@ conditional_t::get_set_dbl( const J &jo, const std::optional<dbl_or_var_part> &m
         };
     } else if( jo.has_member( "rand" ) ) {
         jo.throw_error( "can not alter the random number generator, silly!  In " + jo.str() );
-    } else if( jo.has_member( "weather" ) ) {
-        std::string weather_aspect = jo.get_string( "weather" );
-        if( weather_aspect == "temperature" ) {
-            return [min, max]( dialogue & d, double input ) {
-                const int new_temperature = handle_min_max( d, input, min, max );
-                get_weather().weather_precise->temperature = units::from_fahrenheit( new_temperature );
-                get_weather().temperature = units::from_fahrenheit( new_temperature );
-                get_weather().clear_temp_cache();
-            };
-        } else if( weather_aspect == "windpower" ) {
-            return [min, max]( dialogue & d, double input ) {
-                get_weather().weather_precise->windpower = handle_min_max( d, input, min, max );
-                get_weather().clear_temp_cache();
-            };
-        } else if( weather_aspect == "humidity" ) {
-            return [min, max]( dialogue & d, double input ) {
-                get_weather().weather_precise->humidity = handle_min_max( d, input, min, max );
-                get_weather().clear_temp_cache();
-            };
-        } else if( weather_aspect == "pressure" ) {
-            return [min, max]( dialogue & d, double input ) {
-                get_weather().weather_precise->pressure = handle_min_max( d, input, min, max );
-                get_weather().clear_temp_cache();
-            };
-        }
     } else if( jo.has_member( "faction_trust" ) ) {
         str_or_var name = get_str_or_var( jo.get_member( "faction_trust" ), "faction_trust" );
         return [name, min, max]( dialogue & d, double input ) {
@@ -2656,13 +2651,31 @@ void talk_effect_fun_t::set_arithmetic( const JsonObject &jo, const std::string_
 void talk_effect_fun_t::set_math( const JsonObject &jo, const std::string_view member )
 {
     eoc_math math;
-    math.from_json( jo, member );
+    math.from_json( jo, member, eoc_math::type_t::assign );
     function = [math = std::move( math )]( dialogue & d ) {
         return math.act( d );
     };
 }
 
-void eoc_math::from_json( const JsonObject &jo, std::string_view member )
+void eoc_math::_validate_type( JsonArray const &objects, type_t type_ ) const
+{
+    if( type_ != type_t::compare && action >= oper::equal ) {
+        objects.throw_error( "Comparison operators can only be used in conditional statements" );
+    } else if( type_ == type_t::compare && action < oper::equal ) {
+        if( action == oper::assign ) {
+            objects.throw_error(
+                R"(Assignment operator "=" can't be used in a conditional statement.  Did you mean to use "=="? )" );
+        } else {
+            objects.throw_error( "Only comparison operators can be used in conditional statements" );
+        }
+    } else if( type_ == type_t::ret && action > oper::ret ) {
+        objects.throw_error( "Only return expressions are allowed in this context" );
+    } else if( type_ != type_t::ret && action == oper::ret ) {
+        objects.throw_error( "Return expression in assignment context has no effect" );
+    }
+}
+
+void eoc_math::from_json( const JsonObject &jo, std::string_view member, type_t type_ )
 {
     JsonArray const objects = jo.get_array( member );
     if( objects.size() > 3 ) {
@@ -2714,6 +2727,7 @@ void eoc_math::from_json( const JsonObject &jo, std::string_view member )
             return;
         }
     }
+    _validate_type( objects, type_ );
     bool const lhs_assign = action >= oper::assign && action <= oper::decrease;
     lhs = defer_math( objects.get_string( 0 ), lhs_assign );
     if( action >= oper::plus_assign && action <= oper::decrease ) {
@@ -2764,7 +2778,7 @@ double eoc_math::act( dialogue &d ) const
             return lhs->eval( d ) >= rhs->eval( d );
         case oper::invalid:
         default:
-            debugmsg( "unknown eoc math operator %d", action );
+            debugmsg( "unknown eoc math operator %d %s", action, d.get_callstack() );
     }
 
     return 0;
@@ -2975,6 +2989,14 @@ conditional_t::conditional_t( const JsonObject &jo )
         set_has_flag( jo, "u_has_flag" );
     } else if( jo.has_member( "npc_has_flag" ) ) {
         set_has_flag( jo, "npc_has_flag", true );
+    } else if( jo.has_member( "u_has_species" ) ) {
+        set_has_species( jo, "u_has_species" );
+    } else if( jo.has_member( "npc_has_species" ) ) {
+        set_has_species( jo, "npc_has_species", true );
+    } else if( jo.has_member( "u_bodytype" ) ) {
+        set_bodytype( jo, "u_bodytype" );
+    } else if( jo.has_member( "npc_bodytype" ) ) {
+        set_bodytype( jo, "npc_bodytype", true );
     } else if( jo.has_member( "npc_has_class" ) ) {
         set_npc_has_class( jo, "npc_has_class", true );
     } else if( jo.has_member( "u_has_class" ) ) {
@@ -3162,6 +3184,10 @@ conditional_t::conditional_t( const JsonObject &jo )
         found_sub_member = true;
     } else if( jo.has_member( "compare_string" ) ) {
         set_compare_string( jo, "compare_string" );
+    } else if( jo.has_member( "get_condition" ) ) {
+        set_get_condition( jo, "get_condition" );
+    } else if( jo.has_member( "get_game_option" ) ) {
+        set_get_option( jo, "get_game_option" );
     } else {
         for( const std::string &sub_member : dialogue_data::simple_string_conds ) {
             if( jo.has_string( sub_member ) ) {

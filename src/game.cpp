@@ -635,12 +635,15 @@ void game::toggle_pixel_minimap() const
 
 void game::toggle_language_to_en()
 {
+    // No-op if we aren't complied with localization
+#if defined(LOCALIZE)
     const std::string english = "en" ;
     static std::string secondary_lang = english;
     std::string current_lang = TranslationManager::GetInstance().GetCurrentLanguage();
     secondary_lang = current_lang != english ? current_lang : secondary_lang;
     std::string new_lang = current_lang != english ? english : secondary_lang;
     set_language( new_lang );
+#endif
 }
 
 bool game::is_tileset_isometric() const
@@ -772,6 +775,7 @@ void game::setup()
     // reset kill counts
     kill_tracker_ptr->clear();
     achievements_tracker_ptr->clear();
+    eoc_events_ptr->clear();
     // reset follower list
     follower_ids.clear();
     scent.reset();
@@ -1291,14 +1295,7 @@ void game::calc_driving_offset( vehicle *veh )
         offset = veh->face_vec();
         velocity = veh->cruise_velocity;
     }
-    float rel_offset;
-    if( std::fabs( velocity ) < min_offset_vel ) {
-        rel_offset = 0;
-    } else if( std::fabs( velocity ) > max_offset_vel ) {
-        rel_offset = ( velocity > 0 ) ? 1 : -1;
-    } else {
-        rel_offset = ( velocity - min_offset_vel ) / ( max_offset_vel - min_offset_vel );
-    }
+    const float rel_offset = inverse_lerp( min_offset_vel, max_offset_vel, velocity );
     // Squeeze into the corners, by making the offset vector longer,
     // the PC is still in view as long as both offset.x and
     // offset.y are <= 1
@@ -2672,7 +2669,7 @@ bool game::is_game_over()
         // prevent pain from updating
         u.set_pain( 0 );
         // prevent dodging
-        u.dodges_left = 0;
+        u.set_dodges_left( 0 );
         return false;
     }
     if( uquit == QUIT_DIED ) {
@@ -3466,7 +3463,10 @@ void game::write_memorial_file( std::string sLastWords )
     std::time_t t = std::time( nullptr );
     tm current_time;
     localtime_r( &t, &current_time );
-    std::strftime( buffer, suffix_len, "%Y-%m-%d-%H-%M-%S", &current_time );
+    size_t result = std::strftime( buffer, suffix_len, "%Y-%m-%d-%H-%M-%S", &current_time );
+    if( result == 0 ) {
+        cata_fatal( "Could not construct filename" );
+    }
     memorial_file_path << buffer;
 #endif
 
@@ -7984,8 +7984,8 @@ bool game::take_screenshot() const
 
     // build file name: <map_dir>/screenshots/[<character_name>]_<date>.png
     // NOLINTNEXTLINE(cata-translate-string-literal)
-    const auto tmp_file_name = string_format( "[%s]_%s.png", get_player_character().get_name(),
-                               timestamp_now() );
+    const std::string tmp_file_name = string_format( "[%s]_%s.png", get_player_character().get_name(),
+                                      timestamp_now() );
 
     std::string file_name = ensure_valid_file_name( tmp_file_name );
     auto current_file_path = map_directory.str() + file_name;
@@ -10402,6 +10402,35 @@ bool game::walk_move( const tripoint &dest_loc, const bool via_ramp, const bool 
 
     if( moving ) {
         cata_event_dispatch::avatar_moves( old_abs_pos, u, m );
+
+        // Add trail animation when sprinting
+        if( get_option<bool>( "ANIMATIONS" ) && u.is_running() ) {
+            std::map<tripoint, nc_color> area_color;
+            area_color[oldpos] = c_black;
+            if( u.posy() < oldpos.y ) {
+                if( u.posx() < oldpos.x ) {
+                    explosion_handler::draw_custom_explosion( oldpos, area_color, "run_nw" );
+                } else if( u.posx() == oldpos.x ) {
+                    explosion_handler::draw_custom_explosion( oldpos, area_color, "run_n" );
+                } else {
+                    explosion_handler::draw_custom_explosion( oldpos, area_color, "run_ne" );
+                }
+            } else if( u.posy() == oldpos.y ) {
+                if( u.posx() < oldpos.x ) {
+                    explosion_handler::draw_custom_explosion( oldpos, area_color, "run_w" );
+                } else {
+                    explosion_handler::draw_custom_explosion( oldpos, area_color, "run_e" );
+                }
+            } else {
+                if( u.posx() < oldpos.x ) {
+                    explosion_handler::draw_custom_explosion( oldpos, area_color, "run_sw" );
+                } else if( u.posx() == oldpos.x ) {
+                    explosion_handler::draw_custom_explosion( oldpos, area_color, "run_s" );
+                } else {
+                    explosion_handler::draw_custom_explosion( oldpos, area_color, "run_se" );
+                }
+            }
+        }
     }
 
     if( furniture_move ) {
