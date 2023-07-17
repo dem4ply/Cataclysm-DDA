@@ -1670,6 +1670,11 @@ static bool valid_unload_container( const item_location &container )
         return false;
     }
 
+    // Item must be able to be unloaded
+    if( container->has_flag( flag_NO_UNLOAD ) ) {
+        return false;
+    }
+
     // Container must contain at least one item
     if( container->empty_container() ) {
         return false;
@@ -1776,10 +1781,6 @@ class attach_molle_inventory_preset : public inventory_selector_preset
         }
 
         std::string get_denial( const item_location &loc ) const override {
-
-            if( !loc.get_item()->empty() ) {
-                return "item needs to be empty.";
-            }
 
             if( actor->size - vest->get_contents().get_additional_space_used() < loc->get_pocket_size() ) {
                 return "not enough space left on the vest.";
@@ -1906,6 +1907,13 @@ class repair_inventory_preset: public inventory_selector_preset
                                          chance.first > 0 ? c_light_green : c_unset ) );
             },
             _( "DAMAGE CHANCE" ) );
+
+            append_cell( [actor, &you]( const item_location & loc ) {
+                const int difficulty = actor->repair_recipe_difficulty( *loc );
+                return colorize( string_format( "%d", difficulty ),
+                                 difficulty > you.get_skill_level( actor->used_skill ) ? c_red : c_unset );
+            },
+            _( "DIFFICULTY" ) );
         }
 
         bool is_shown( const item_location &loc ) const override {

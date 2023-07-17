@@ -840,6 +840,30 @@ bool zone_manager::has_near( const zone_type_id &type, const tripoint_abs_ms &wh
     return false;
 }
 
+std::vector<zone_data const *> zone_manager::get_near_zones( const zone_type_id &type,
+        const tripoint_abs_ms &where, int range,
+        const faction_id &fac ) const
+{
+    std::vector<zone_data const *> ret;
+    for( const zone_data &zone : zones ) {
+        if( square_dist( zone.get_center_point(), where ) <= range && zone.get_type() == type &&
+            zone.get_faction() == fac ) {
+            ret.emplace_back( &zone );
+        }
+    }
+
+    map &here = get_map();
+    auto vzones = here.get_vehicle_zones( here.get_abs_sub().z() );
+    for( const zone_data *zone : vzones ) {
+        if( square_dist( zone->get_center_point(), where ) <= range && zone->get_type() == type &&
+            zone->get_faction() == fac ) {
+            ret.emplace_back( zone );
+        }
+    }
+
+    return ret;
+}
+
 bool zone_manager::has_loot_dest_near( const tripoint_abs_ms &where ) const
 {
     for( const auto &ztype : get_manager().get_types() ) {
@@ -1164,7 +1188,7 @@ void zone_manager::add( const std::string &name, const zone_type_id &type, const
     // only non personal zones can be vehicle zones
     if( !personal ) {
         optional_vpart_position const vp = here.veh_at( here.getlocal( start ) );
-        if( vp && vp->vehicle().get_owner() == fac && vp.part_with_feature( "CARGO", false ) ) {
+        if( vp && vp->vehicle().get_owner() == fac && vp.cargo() ) {
             // TODO:Allow for loot zones on vehicles to be larger than 1x1
             if( start == end &&
                 ( silent || query_yn( _( "Bind this zone to the cargo part here?" ) ) ) ) {
@@ -1533,8 +1557,8 @@ void zone_manager::revert_vzones()
     map &here = get_map();
     for( zone_data zone : removed_vzones ) {
         //Code is copied from add() to avoid yn query
-        if( const std::optional<vpart_reference> vp = here.veh_at( here.getlocal(
-                    zone.get_start_point() ) ).part_with_feature( "CARGO", false ) ) {
+        const tripoint pos = here.getlocal( zone.get_start_point() );
+        if( const std::optional<vpart_reference> vp = here.veh_at( pos ).cargo() ) {
             zone.set_is_vehicle( true );
             vp->vehicle().loot_zones.emplace( vp->mount(), zone );
             here.register_vehicle_zone( &vp->vehicle(), here.get_abs_sub().z() );

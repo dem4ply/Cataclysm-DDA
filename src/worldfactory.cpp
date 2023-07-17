@@ -352,9 +352,10 @@ void worldfactory::init()
         auto world_sav_files = get_files_from_path( SAVE_EXTENSION, world_dir, false );
         // split the save file names between the directory and the extension
         for( auto &world_sav_file : world_sav_files ) {
-            size_t save_index = world_sav_file.find( SAVE_EXTENSION );
-            world_sav_file = world_sav_file.substr( world_dir.size() + 1,
-                                                    save_index - ( world_dir.size() + 1 ) );
+            const size_t start_of_file = world_dir.size() + 1;
+            size_t save_index = world_sav_file.find( SAVE_EXTENSION, start_of_file );
+            world_sav_file = world_sav_file.substr( start_of_file,
+                                                    save_index - start_of_file );
         }
 
         // the directory name is the name of the world
@@ -996,8 +997,8 @@ int worldfactory::show_worldgen_tab_modselection( const catacurses::window &win,
         ctxt.register_action( "PREV_TAB" );
     }
     ctxt.register_action( "CONFIRM", to_translation( "Activate / deactivate mod" ) );
-    ctxt.register_action( "ADD_MOD" );
-    ctxt.register_action( "REMOVE_MOD" );
+    ctxt.register_action( "MOVE_MOD_UP" );
+    ctxt.register_action( "MOVE_MOD_DOWN" );
     ctxt.register_action( "SAVE_DEFAULT_MODS" );
     ctxt.register_action( "VIEW_MOD_DESCRIPTION" );
     ctxt.register_action( "FILTER" );
@@ -1387,12 +1388,12 @@ int worldfactory::show_worldgen_tab_modselection( const catacurses::window &win,
                     active_header = 0;
                 }
             }
-        } else if( action == "ADD_MOD" ) {
+        } else if( action == "MOVE_MOD_DOWN" ) {
             if( active_header == 1 && active_mod_order.size() > 1 ) {
                 mman_ui->try_shift( '+', cursel[1], active_mod_order );
             }
             recalc_start = true;
-        } else if( action == "REMOVE_MOD" ) {
+        } else if( action == "MOVE_MOD_UP" ) {
             if( active_header == 1 && active_mod_order.size() > 1 ) {
                 mman_ui->try_shift( '-', cursel[1], active_mod_order );
             }

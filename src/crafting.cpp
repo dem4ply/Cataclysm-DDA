@@ -226,7 +226,7 @@ float Character::workbench_crafting_speed_multiplier( const item &craft,
                    *loc ).part_with_feature( "WORKBENCH", true ) ) {
         // Vehicle workbench
         const vpart_info &vp_info = vp->part().info();
-        if( const std::optional<vpslot_workbench> &wb_info = vp_info.get_workbench_info() ) {
+        if( const std::optional<vpslot_workbench> &wb_info = vp_info.workbench_info ) {
             multiplier = wb_info->multiplier;
             allowed_mass = wb_info->allowed_mass;
             allowed_volume = wb_info->allowed_volume;
@@ -301,7 +301,7 @@ float Character::crafting_speed_multiplier( const item &craft,
     }
     if( bench_multi <= 0.1f || ( bench_multi <= 0.33f && total_multi <= 0.2f ) ) {
         add_msg_if_player( m_bad, _( "The %s is too large and/or heavy to work on.  You may want to"
-                                     " use a workbench or a lifting tool" ), craft.tname() );
+                                     " use a workbench or a lifting tool." ), craft.tname() );
         return 0.0f;
     }
     if( morale_multi <= 0.2f || ( morale_multi <= 0.33f && total_multi <= 0.2f ) ) {
@@ -518,9 +518,8 @@ std::vector<const item *> Character::get_eligible_containers_for_crafting() cons
             }
         }
 
-        if( const std::optional<vpart_reference> vp = here.veh_at( loc ).part_with_feature( "CARGO",
-                true ) ) {
-            for( const item &it : vp->vehicle().get_items( vp->part_index() ) ) {
+        if( const std::optional<vpart_reference> vp = here.veh_at( loc ).cargo() ) {
+            for( const item &it : vp->items() ) {
                 std::vector<const item *> eligible = get_eligible_containers_recursive( it, true );
                 conts.insert( conts.begin(), eligible.begin(), eligible.end() );
             }
@@ -574,7 +573,8 @@ const inventory &Character::crafting_inventory( const tripoint &src_pos, int rad
     if( src_pos == tripoint_zero ) {
         inv_pos = pos();
     }
-    if( moves == crafting_cache.moves
+    if( crafting_cache.valid
+        && moves == crafting_cache.moves
         && radius == crafting_cache.radius
         && calendar::turn == crafting_cache.time
         && inv_pos == crafting_cache.position ) {
@@ -615,6 +615,7 @@ const inventory &Character::crafting_inventory( const tripoint &src_pos, int rad
         *crafting_cache.crafting_inventory += item( "shovel", calendar::turn );
     }
 
+    crafting_cache.valid = true;
     crafting_cache.moves = moves;
     crafting_cache.time = calendar::turn;
     crafting_cache.position = inv_pos;
@@ -624,7 +625,8 @@ const inventory &Character::crafting_inventory( const tripoint &src_pos, int rad
 
 void Character::invalidate_crafting_inventory()
 {
-    crafting_cache.time = calendar::before_time_starts;
+    crafting_cache.valid = false;
+    crafting_cache.crafting_inventory->clear();
 }
 
 void Character::make_craft( const recipe_id &id_to_make, int batch_size,
@@ -711,18 +713,16 @@ static item_location set_item_map( const tripoint &loc, item &newit )
 static item_location set_item_map_or_vehicle( const Character &p, const tripoint &loc, item &newit )
 {
     map &here = get_map();
-    if( const std::optional<vpart_reference> vp = here.veh_at( loc ).part_with_feature( "CARGO",
-            false ) ) {
-
-        if( const std::optional<vehicle_stack::iterator> it = vp->vehicle().add_item( vp->part_index(),
-                newit ) ) {
+    if( const std::optional<vpart_reference> vp = here.veh_at( loc ).cargo() ) {
+        vehicle &veh = vp->vehicle();
+        if( const std::optional<vehicle_stack::iterator> it = veh.add_item( vp->part(), newit ) ) {
             p.add_msg_player_or_npc(
                 //~ %1$s: name of item being placed, %2$s: vehicle part name
                 pgettext( "item, furniture", "You put the %1$s on the %2$s." ),
                 pgettext( "item, furniture", "<npcname> puts the %1$s on the %2$s." ),
                 ( *it )->tname(), vp->part().name() );
 
-            return item_location( vehicle_cursor( vp->vehicle(), vp->part_index() ), & **it );
+            return item_location( vehicle_cursor( veh, vp->part_index() ), & **it );
         }
 
         // Couldn't add the in progress craft to the target part, so drop it to the map.
@@ -772,7 +772,7 @@ static item_location place_craft_or_disassembly(
             }
         } else if( const std::optional<vpart_reference> vp = here.veh_at(
                        adj ).part_with_feature( "WORKBENCH", true ) ) {
-            if( const std::optional<vpslot_workbench> &wb_info = vp->part().info().get_workbench_info() ) {
+            if( const std::optional<vpslot_workbench> &wb_info = vp->part().info().workbench_info ) {
                 if( wb_info->multiplier > best_bench_multi ) {
                     best_bench_multi = wb_info->multiplier;
                     target = adj;
@@ -1128,7 +1128,7 @@ Character::craft_roll_data Character::recipe_success_roll_data( const recipe &ma
     }
 
     // Let's just be careful, I don't want to touch a negative stddev
-    crafting_stddev = std::max( crafting_stddev, 0.f );
+    crafting_stddev = std::max( crafting_stddev, 1.f );
 
     craft_roll_data ret;
     ret.center = weighted_skill_average;
@@ -1136,7 +1136,7 @@ Character::craft_roll_data Character::recipe_success_roll_data( const recipe &ma
     ret.final_difficulty = final_difficulty + 1;
     if( has_trait( trait_DEBUG_CNF ) ) {
         ret.center = 2.f;
-        ret.stddev = 0.f;
+        ret.stddev = std::numeric_limits<decltype( ret.stddev )>::epsilon();
         ret.final_difficulty = 0.f;
     }
     return ret;
@@ -1920,10 +1920,24 @@ std::list<item> Character::consume_items( map &m, const comp_selection<item_comp
     if( has_trait( trait_DEBUG_HS ) ) {
         return ret;
     }
+    // populate a grid of spots that can be reached
+    std::vector<tripoint> reachable_pts;
+    m.reachable_flood_steps( reachable_pts, origin, radius, 1, 100 );
+    return consume_items( m, is, batch, filter, reachable_pts, select_ind );
+}
+
+std::list<item> Character::consume_items( map &m, const comp_selection<item_comp> &is, int batch,
+        const std::function<bool( const item & )> &filter, const std::vector<tripoint> &reachable_pts,
+        bool select_ind )
+{
+    std::list<item> ret;
+
+    if( has_trait( trait_DEBUG_HS ) ) {
+        return ret;
+    }
 
     item_comp selected_comp = is.comp;
 
-    const tripoint &loc = origin;
     const bool by_charges = item::count_by_charges( selected_comp.type ) && selected_comp.count > 0;
     // Count given to use_amount/use_charges, changed by those functions!
     int real_count = ( selected_comp.count > 0 ) ? selected_comp.count * batch : std::abs(
@@ -1931,10 +1945,10 @@ std::list<item> Character::consume_items( map &m, const comp_selection<item_comp
     // First try to get everything from the map, than (remaining amount) from player
     if( is.use_from & usage_from::map ) {
         if( by_charges ) {
-            std::list<item> tmp = m.use_charges( loc, radius, selected_comp.type, real_count, filter );
+            std::list<item> tmp = m.use_charges( reachable_pts, selected_comp.type, real_count, filter );
             ret.splice( ret.end(), tmp );
         } else {
-            std::list<item> tmp = m.use_amount( loc, radius, selected_comp.type, real_count, filter,
+            std::list<item> tmp = m.use_amount( reachable_pts, selected_comp.type, real_count, filter,
                                                 select_ind );
             remove_ammo( tmp, *this );
             ret.splice( ret.end(), tmp );
@@ -2252,6 +2266,29 @@ void Character::consume_tools( map &m, const comp_selection<tool_comp> &tool, in
         // Map::use_charges() does not handle UPS charges.
         if( quantity > 0 ) {
             use_charges( tool.comp.type, quantity, radius );
+        }
+    }
+
+    // else, usage_from::none (or usage_from::cancel), so we don't use up any tools;
+}
+
+void Character::consume_tools( map &m, const comp_selection<tool_comp> &tool, int batch,
+                               const std::vector<tripoint> &reachable_pts, basecamp *bcp )
+{
+    if( has_trait( trait_DEBUG_HS ) ) {
+        return;
+    }
+    const itype *tmp = item::find_type( tool.comp.type );
+    int quantity = tool.comp.count * batch * tmp->charge_factor();
+
+    if( tool.use_from == usage_from::player || tool.use_from == usage_from::both ) {
+        use_charges( tool.comp.type, quantity );
+    }
+    if( tool.use_from == usage_from::map || tool.use_from == usage_from::both ) {
+        m.use_charges( reachable_pts, tool.comp.type, quantity, return_true<item>, bcp );
+        // Map::use_charges() does not handle UPS charges.
+        if( quantity > 0 ) {
+            m.consume_ups( reachable_pts, units::from_kilojoule( quantity ) );
         }
     }
 
