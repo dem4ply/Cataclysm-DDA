@@ -102,6 +102,7 @@ static const efftype_id effect_hit_by_player( "hit_by_player" );
 static const efftype_id effect_incorporeal( "incorporeal" );
 static const efftype_id effect_lightsnare( "lightsnare" );
 static const efftype_id effect_narcosis( "narcosis" );
+static const efftype_id effect_pet( "pet" );
 static const efftype_id effect_stunned( "stunned" );
 static const efftype_id effect_venom_dmg( "venom_dmg" );
 static const efftype_id effect_venom_player1( "venom_player1" );
@@ -990,6 +991,15 @@ void Character::reach_attack( const tripoint &p, int forced_movecost )
             !x_in_y( ( target_size * target_size + 1 ) * skill,
                      ( inter->get_size() * inter->get_size() + 1 ) * 10 ) ) {
             // Even if we miss here, low roll means weapon is pushed away or something like that
+            if( inter->has_effect( effect_pet ) || ( inter->is_npc() &&
+                    inter->as_npc()->is_friendly( get_player_character() ) ) ) {
+                if( query_yn( _( "Your attack may cause accidental injury, continue?" ) ) ) {
+                    critter = inter;
+                    break;
+                } else {
+                    return;
+                }
+            }
             critter = inter;
             break;
             /** @EFFECT_STABBING increases ability to reach attack through fences */
@@ -1193,7 +1203,7 @@ float Character::dodge_roll() const
 {
     // if your character has evasion then try rolling that first
     double evasion = enchantment_cache->modify_value( enchant_vals::mod::EVASION, 0.0 );
-    if( rng( 0, 99 ) < evasion * 100 ) {
+    if( rng( 0, 99 ) < evasion * 100.0 ) {
         // arbitrarily high number without being max float
         return 999999.0f;
     }

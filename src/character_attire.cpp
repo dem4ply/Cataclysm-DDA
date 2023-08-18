@@ -1168,7 +1168,9 @@ units::mass outfit::weight_carried_with_tweaks( const std::map<const item *, int
 {
     units::mass ret = 0_gram;
     for( const item &i : worn ) {
-        if( !without.count( &i ) ) {
+        if( without.empty() ) {
+            ret += i.weight();
+        } else if( !without.count( &i ) ) {
             for( const item *j : i.all_items_ptr( item_pocket::pocket_type::CONTAINER ) ) {
                 if( j->count_by_charges() ) {
                     ret -= get_selected_stack_weight( j, without );
@@ -1791,8 +1793,13 @@ void outfit::get_overlay_ids( std::vector<std::pair<std::string, std::string>> &
         if( worn_item.has_flag( json_flag_HIDDEN ) ) {
             continue;
         }
-        const std::string variant = worn_item.has_itype_variant() ? worn_item.itype_variant().id : "";
-        overlay_ids.emplace_back( "worn_" + worn_item.typeId().str(), variant );
+        if( worn_item.has_var( "sprite_override" ) ) {
+            overlay_ids.emplace_back( "worn_" + worn_item.get_var( "sprite_override" ),
+                                      worn_item.get_var( "sprite_override_variant", "" ) );
+        } else {
+            const std::string variant = worn_item.has_itype_variant() ? worn_item.itype_variant().id : "";
+            overlay_ids.emplace_back( "worn_" + worn_item.typeId().str(), variant );
+        }
     }
 }
 

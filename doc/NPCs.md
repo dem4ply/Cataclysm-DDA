@@ -150,22 +150,39 @@ Format:
   "mission": 7,
   "chat": "TALK_EXAMPLE",
   "faction": "no_faction",
-  "death_eocs": [ "EOC_DEATH_NPC_TEST" ]
+  "death_eocs": [ "EOC_DEATH_NPC_TEST" ],
+  "age": 30,
+  "height": 180,
+  "str": 7,
+  "dex": 8,
+  "int": 9,
+  "per": 10,
+  "personality": {
+    "aggression": -1,
+    "bravery":  2,
+    "collector":  -3,
+    "altruism":  4
+  }
 }
 ```
-This is the JSON that creates the NPC ID that is used to spawn an NPC in "mapgen" (map generation).
+This is the JSON that creates the NPC ID that is used to spawn an NPC in "mapgen" (map generation). If optional fields are omitted, values are defined randomly.
 
-Attitude is based on the enum in `npc.h`. The important ones are `0=NPCATT_NULL`, `1=NPCATT_TALK`, `3=NPCATT_FOLLOW`, `10=NPCATT_KILL`, and `11=NPCATT_FLEE`.
-
-Mission is based on the enum in `npc.h`.  The important ones are `0=NPC_MISSION_NULL`, `3=NPC_MISSION_SHOPKEEP`, `7=NPC_MISSION_GUARD`, and `8=NPC_MISSION_GUARD_PATROL`.
-
-Chat is covered in the dialogue examples below.
-
-Faction determines what faction, if any, the NPC belongs to.  Some examples are the Free Traders, Old Guard, Marloss Evangelists, and Hell's raiders but could include a brand new faction you create!
-
-`death_eocs` are string `effect_on_condition` ids and/or inline `effect_on_condition`s (see [EFFECT_ON_CONDITION.md](EFFECT_ON_CONDITION.md)).  When the npc dies all of these `eoc`s are run with the victim as u and the killer as npc.
-
-`age` and `height` are optional fields that can be used to define the age and height (in cm) of the NPC respectively.
+| field | Description
+|---    | ---
+| `name_unique` | Set name of NPC.
+| `name_suffix` | Set name suffix of NPC.
+| `attitude`    | _(mandatory)_ Based on the enum in `npc.h`. The important ones are `0=NPCATT_NULL`, `1=NPCATT_TALK`, `3=NPCATT_FOLLOW`, `10=NPCATT_KILL`, and `11=NPCATT_FLEE`.
+| `mission`     | _(mandatory)_ Based on the enum in `npc.h`. The important ones are `0=NPC_MISSION_NULL`, `3=NPC_MISSION_SHOPKEEP`, `7=NPC_MISSION_GUARD`, and `8=NPC_MISSION_GUARD_PATROL`.
+| `chat`        | _(mandatory)_ Covered in the dialogue examples below.
+| `faction`     | Set faction NPC belongs to (see [FACTIONS.md](FACTIONS.md)).
+| `death_eocs`  | String `effect_on_condition` ids and/or inline `effect_on_condition`s (see [EFFECT_ON_CONDITION.md](EFFECT_ON_CONDITION.md)). When the npc dies all of these `eoc`s are run with the victim as u and the killer as npc.
+| `age`         | Set age of NPC.
+| `height`      | Set height of NPC. (in cm)
+| `str`         | Set strength of NPC.
+| `dex`         | Set dexterity of NPC.
+| `int`         | Set intelligence of NPC.
+| `per`         | Set perception of NPC.
+| `personality` | Set personality of NPC. For example, positive value of `aggression` means NPC is aggressive, negative value means NPC is defensive.
 
 ---
 
@@ -789,6 +806,7 @@ The `effect` field of `speaker_effect` or a `response` can be any of the followi
 | `assign_mission`  | Assigns a previously selected mission to your character.        |
 | `mission_success` | Resolves the current mission successfully.                      |
 | `mission_failure` | Resolves the current mission as a failure.                      |
+| `finish_mission`  | Resolves a specific mission defined by ID                       |
 | `clear_mission`   | Clears the mission from the your character's assigned missions. |
 | `mission_reward`  | Gives the player the mission's reward.                          |
 
@@ -808,45 +826,7 @@ The `effect` field of `speaker_effect` or a `response` can be any of the followi
 
 #### Character effects / Mutations
 
-Effect | Description
----|---
-`u_mutate`, `npc_mutate`: int or [variable object](#variable-object), (*optional* `use_vitamins: vitamin_bool`) | Your character or the NPC will attempt to mutate, with a one in int chance of using the highest category, with 0 never using the highest category, requiring vitamins if `vitamin_bool` is true(defaults true)
-`u_mutate_category`, `npc_mutate_category`: string or [variable object](#variable-object), (*optional* `use_vitamins: vitamin_bool`) | Your character or the NPC will attempt to mutate in the category, requiring vitamins if `vitamin_bool` is true(defaults true)
-`u_add_effect, npc_add_effect: ` string or [variable object](#variable-object), (`duration: ` duration or [variable object](#variable-object)),(*optional* `target_part: ` [string or variable object](#variable-object) ) , (*optional* `intensity: ` int or [variable object](#variable-object) )<br/> | Your character or the NPC will gain the effect for `duration`, turns at intensity `intensity` or 0 if it was not supplied. If `force_bool` is true(defaults false) immunity will be ignored. If `target_part` is supplied that part will get the effect otherwise its a whole body effect. If `target_part` is `RANDOM` a random body part will be used. If `duration` is `"PERMANENT"`, the effect will be added permanently.
-`u_add_bionic, npc_add_bionic: ` string or [variable object](#variable-object) | Your character or the NPC will gain the bionic.
-`u_lose_bionic, npc_lose_bionic: ` string or [variable object](#variable-object) | Your character or the NPC will lose the bionic.
-`u_add_trait, npc_add_trait: `string or [variable object](#variable-object) | Your character or the NPC will gain the trait.
-`u_lose_effect, npc_lose_effect: `string or [variable object](#variable-object) | Your character or the NPC will lose the effect if they have it.
-`u_lose_trait, npc_lose_trait: `string or [variable object](#variable-object) | Your character or the NPC will lose the trait.
-`u_activate_trait, npc_activate_trait: `string or [variable object](#variable-object) | Your character or the NPC will activate the trait.
-`u_deactivate_trait, npc_deactivate_trait: `string or [variable object](#variable-object) | Your character or the NPC will deactivate the trait.
-`u_learn_martial_art, npc_learn_martial_art: `string or [variable object](#variable-object) | Your character or the NPC will learn the martial art style.
-`u_forget_martial_art, npc_forget_martial_art: `string or [variable object](#variable-object) | Your character or the NPC will forget the martial art style.
-`u_add_var, npc_add_var`: `var_name, type: type_str`, `context: context_str`, either `value: value_str` or `time: true` or `possible_values: string_array` | Your character or the NPC will store `value_str` as a variable that can be later retrieved by `u_has_var` or `npc_has_var`.  `npc_add_var` can be used to store arbitrary local variables, and `u_add_var` can be used to store arbitrary "global" variables, and should be used in preference to setting effects.  If `time` is used instead of `value_str`, then the current turn of the game is stored. If `possible_values` is used one of the values given at random will be used.
-`u_lose_var`, `npc_lose_var`: `var_name`, `type: type_str`, `context: context_str` | Your character or the NPC will clear any stored variable that has the same `var_name`, `type_str`, and `context_str`.
-`u_adjust_var, npc_adjust_var`: `var_name, type: type_str`, `context: context_str`, `adjustment: `int or [variable object](#variable-object) | Your character or the NPC will adjust the stored variable by `adjustment`.
-`set_string_var`: string or [variable object](#variable-object) or array of either, `target_var: ` [variable object](#variable-object) | Store string from `set_string_var` in the variable object `target_var`. If an array is provided a random element will be used.
-`set_condition`: string or [variable object](#variable-object), `condition`: a dialogue condition object. | Store the dialogue condition object `condition` as the provided name. Set conditions have the same scope as context variables and can be gotten in nested EOCs.
-`u_location_variable, npc_location_variable`: `target_var`, (*optional* `min_radius: `int or [variable object](#variable-object)) , (*optional* `max_radius: ` int or [variable object](#variable-object)), (*optional* `outdoor_only: outdoor_only_bool`), (*optional* `target_params: assign_mission_target` parameters), (*optional* `z_adjust: ` int or [variable object](#variable-object)), (*optional* `x_adjust: `string or [variable object](#variable-object)), (*optional* `y_adjust: `int or [variable object](#variable-object)), (*optional* `z_override: bool`), (*optional* `terrain, furniture, trap, monster, zone, or npc: `string or [variable object](#variable-object)), (*optional* `target_min_radius: `int or [variable object](#variable-object)), (*optional* `target_max_radius: `int or [variable object](#variable-object)) | If `target_params` is defined it will be used to find a tile any of the following commands will search from that tile rather than the player or npc location. See [the missions docs](MISSIONS_JSON.md) for `assign_mission_target` parameters.  If `terrain`, `furniture`, `trap`, `monster`, or `npc` are defined then an entity with the corresponding id will be found between `target_min_radius`(defaults to 0) and `target_max_radius`(defaults to 0) before the following alterations are made to it.  If an empty string is passed for `furniture`, `trap`, `monster`, `zone`, or `npc` than any will be found.  Otherwise targets a point between `min_radius_int`( or `min_radius_variable_object`)(defaults to 0) and `max_radius_int`( or `max_radius_variable_object`)(defaults to 0) spaces of the target and if `outdoor_only_bool` is true(defaults to false) will only choose outdoor spaces. The chosen point will be saved to `target_var` which is a `variable_object`.  `z_adjust` will be used as the Z value if `z_override`(defaults false) is true or added to the current z value otherwise. x_adjust and y_adjust are added to the final position.
-`location_variable_adjust`: `target_var`, (*optional* `z_adjust: ` int or [variable object](#variable-object)), (*optional* `x_adjust: `string or [variable object](#variable-object)), (*optional* `y_adjust: `int or [variable object](#variable-object)), (*optional* `z_override: bool`), (*optional* `output_var: `[variable object](#variable-object)), (*optional* `overmap_tile: bool`) | Adjusts `target_var` which is a `variable_object` most likely made using `u_location_variable`.  `z_adjust` will be used as the Z value if `z_override`(defaults false) is true or added to the current z value otherwise.  x_adjust and y_adjust are added to the final position.  If `output_var` is provided the adjusted value will be save to it instead of `target_var`.  If `overmap_tile`(defaults false) is true, the adjustments will be made in overmap tiles rather than map tiles.
-`barber_hair` | Opens a menu allowing the player to choose a new hair style.
-`barber_beard` | Opens a menu allowing the player to choose a new beard style.
-`u_learn_recipe, npc_learn_recipe: `string or [variable object](#variable-object)  | Your character or the npc will learn and memorize the recipe.
-`u_forget_recipe, npc_forget_recipe: `string or [variable object](#variable-object)  | Your character or the npc will forget the recipe.
-`npc_first_topic: `string or [variable object](#variable-object) | Changes the initial talk_topic of the NPC in all future dialogues.
-`u_add_wet, npc_add_wet: `int or [variable object](#variable-object) | Your character or the NPC will be wet as if they were in the rain.
-`u_make_sound, npc_make_sound:`string or [variable object](#variable-object), `volume: `int or [variable object](#variable-object), `type: `string or [variable object](#variable-object), (*optional* `target_var: `[variable object](#variable-object)), (*optional* `snippet: snippet_bool`), (*optional* `same_snippet: same_snippet_bool`)  | A sound of description `message_string` will be made at your character or the NPC's location of volume `volume` and type `type_`. Possible types are: background, weather, music, movement, speech, electronic_speech, activity, destructive_activity, alarm, combat, alert, or order. If `target_var` is set this effect will be centered on a location saved to a variable with its name.  If `snippet_bool` is true(defaults to false) it will instead display a random snippet from `message_string` category, if `same_snippet_bool` is true(defaults to false) it will always use the same snippet and will set a variable that can be used for custom item names(this requires the snippets to have id's set)
-`u_mod_healthy, npc_mod_healthy : `int or [variable object](#variable-object), `cap: ` int or [variable object](#variable-object) | Your character or the NPC will have `amount_int` added or subtracted from its health value, but not beyond `cap_int` or `cap_variable_object`.
-`u_add_morale, npc_add_morale: `string or [variable object](#variable-object), (*optional* `bonus: `int or [variable object](#variable-object)), (*optional* `max_bonus: `int or [variable object](#variable-object)), (*optional* `duration: `duration or [variable object](#variable-object)), (*optional* `decay_start: `duration or [variable object](#variable-object) ), (*optional* `capped`: `capped_bool`)| Your character or the NPC will gain a morale bonus of type `morale_string`. Morale is changed by `bonus`(default 1), with a maximum of up to `max_bonus_int`(default 1). It will last for `duration` time (default 1 hour). It will begin to decay after `decay_start` time (default 30 minutes). `capped_bool` Whether this morale is capped or not, defaults to false.
-`u_lose_morale, npc_lose_morale: `string or [variable object](#variable-object) | Your character or the NPC will lose any morale of type `morale_string`.
-`u_add_faction_trust: `int or [variable object](#variable-object) | Your character gains trust with the speaking NPC's faction, which affects which items become available for trading from shopkeepers of that faction.
-`u_lose_faction_trust: `int or [variable object](#variable-object) | Your character loses trust with the speaking NPC's faction, which affects which items become available for trading from shopkeepers of that faction.
-`u_message, npc_message: `string or [variable object](#variable-object), (*optional* `sound: sound_bool`), (*optional* `outdoor_only: outdoor_only_bool`), (*optional* `snippet: snippet_bool`), (*optional* `same_snippet: snippet_bool`, (*optional* `type: `string or [variable object](#variable-object)), (*optional* `popup: popup_bool`) | Displays a message to either the player or the npc of `message_string`.  Will not display unless the player or npc is the actual player.  If `snippet_bool` is true(defaults to false) it will instead display a random snippet from `message_string` category, if `same_snippet_bool` is true(defaults to false) it will always use the same snippet and will set a variable that can be used for custom item names(this requires the snippets to have id's set).  If `sound` is true (defaults to false) it will only display the message if the player is not deaf.  `outdoor_only`(defaults to false) only matters when `sound` is true and will make the message less likely to be heard if the player is underground. Message will display as type of `type`. Type affects the color of message and can be any of the following values: good, neutral, bad, mixed, warning, info, debug, headshot, critical, grazing.  enums.h has more info on each types use. If `popup_bool` is true the message will be in a modal popup the user has to dismiss to continue.  You can use any of the  Special Custom Entries(defined above).
-`u_cast_spell, npc_cast_spell : fake_spell_data`, (*optional* `true_eocs: eocs_array`), (*optional* `false_eocs: eocs_array`) | The spell described by fake_spell_data will be cast with u or the npc as the caster and u or the npc's location as the target.  Fake spell data can have the following attributes: `id:string`: the id of the spell to cast, (*optional* `hit_self`: bool ( defaults to false ) if true can hit the caster, `trigger_message`: string to display on trigger, `npc_message`: string for message if npc uses, `max_level` int max level of the spell, `min_level` int min level of the spell ).  If the spell is cast, then all of the effect_on_conditions in `true_eocs` are run, otherwise all the effect_on_conditions in `false_eocs` are run.
-`u_assign_activity, npc_assign_activity: `string or [variable object](#variable-object), `duration: `duration or [variable object](#variable-object) | Your character or the NPC will start activity `u_assign_activity`. It will last for `duration` time.
-`u_teleport, npc_teleport: `[variable object](#variable-object), (*optional* `success_message: `string or [variable object](#variable-object)), (*optional* `fail_message: `string or [variable object](#variable-object)), (*optional* `force: force_bool`) | u or npc are teleported to the destination stored in the variable named by `target_var`.  If the teleport succeeds and `success_message` is defined it will be displayed, if it fails and `fail_message` is defined it will be displayed.  If `force` is true any creatures at the destination will be killed and if blocked a nearby spot will be chosen to teleport to instead.
-`u_set_hp, npc_set_hp : `int or [variable object](#variable-object), (*optional* `target_part: `string or [variable object](#variable-object)), (*optional* `only_increase: bool`), (*optional* `main_only: bool`), (*optional* `minor_only: bool`), (*optional* `max: bool`) | Your character or the NPC will have the hp of `target_part`(or all parts if it was not used) set to `amount`.  If `only_increase` is true (defaults to false) this will only happen if it increases the parts hp.  If `major_only` is true (defaults to false) only major body parts will be affected, if `minor_only` (defaults to false) instead only minor parts will be affected.  If `max` (defaults to false) is true `amount` will be ignored and the part will be set to its max hp.
-`u_die, npc_die` | Your character or the NPC will die.
+[See EFFECT_ON_CONDITION.md, #Character effects](EFFECT_ON_CONDITION.md#Character-effects)
 
 #### Trade / Items
 
@@ -1000,6 +980,7 @@ Condition | Type | Description
 `"u_female"`<br/>`"npc_female"` | simple string | `true` if the player character or NPC is female.
 `"u_at_om_location"`<br/>`"npc_at_om_location"` | string or [variable object](#variable-object) | `true` if the player character or NPC is standing on an overmap tile with `u_at_om_location`'s id.  The special string `"FACTION_CAMP_ANY"` changes it to return true if the player or NPC is standing on a faction camp overmap tile.  The special string `"FACTION_CAMP_START"` changes it to return true if the overmap tile that the player or NPC is standing on can be turned into a faction camp overmap tile.
 `"u_has_trait"`<br/>`"npc_has_trait"` | string or [variable object](#variable-object) | `true` if the player character or NPC has a specific trait.  Simpler versions of `u_has_any_trait` and `npc_has_any_trait` that only checks for one trait.
+`"u_has_visible_trait"`<br/>`"npc_has_visible_trait"` | string or [variable object](#variable-object) | `true` if the player character or NPC has a trait that is visible to the other side of the conversation.  For example, the NPC's "visible" traits to the player character are those that show in NPC's info window when looking around.
 `"u_has_martial_art"`<br/>`"npc_has_martial_art"` | string or [variable object](#variable-object) | `true` if the player character or NPC knows a specific martial arts style.
 `"u_has_flag"`<br/>`"npc_has_flag"` | string or [variable object](#variable-object) | `true` if the player character or NPC has the specified character flag.  The special trait flag `"MUTATION_THRESHOLD"` checks to see if the player or NPC has crossed a mutation threshold.  Monsters are checked for both JSON flags (conferred by effects) and monster flags.
 `"u_has_species"`<br/>`npc_has_species` | string or [variable object](#variable-object) | `true` if the alpha / beta talker have the defined species.
@@ -1298,6 +1279,7 @@ Mutator Name | Required Keys | Description
 `"ma_technique_description"` | `matec_id`: String or [variable object](#variable-object). | Returns the description of the martial arts tech with ID `matec_id` 
 `"valid_technique`" | `blacklist`: array of String or [variable object](#variable-object). <br/> `crit`: bool <br/> `dodge_counter`: bool <br/> `block_counter`: bool | Returns a random valid technique for the alpha talker to use against the beta talker with the provided specifications.
 `"loc_relative_u"` | `target`: String or [variable object](#variable-object). | target should be a string like "(x,y,z)" where x,y,z are coordinates relative to the player. Returns the abs_ms coordinates as a string (ready to store as a location variable), in the form "(x,y,z)" of the provided point relative to the player. So `"target":"(0,1,0)"` would return the point south of the player.
+`"topic_item"` | | Returns current topic_item as a string. See [Repeat Responses](#repeat-responses)
 
 
 ### Compare Numbers and Arithmetics
@@ -1428,7 +1410,7 @@ If `operator` is `=`, `+=`, `-=`, `*=`, `/=`, or `%=` the operation is an assign
 `lhs` must be an [assignment target](#assignment-target). `rhs` is evaluated and stored in the assignment target from `lhs`.
 
 
-If `operator` is `==`, `>=`, `<=`, `>`, or `<`, the operation is a comparison:
+If `operator` is `==`, `!=`, `>=`, `<=`, `>`, or `<`, the operation is a comparison:
 ```JSON
 "condition": { "math": [ "u_val('stamina') * 2", ">=", "5000 + rand( 300 )" ] },
 ```
@@ -1474,7 +1456,7 @@ Common math functions are supported:
 Function composition is also supported, for example `sin( rng(0, max( 0.5, u_sin_var ) ) )`
 
 #### Ternary and inline boolean operators
-Inline comparison operators evaluate as 1 for true and 0 for false.
+Inline [comparison operators](#three-strings--assignment-or-comparison) evaluate as 1 for true and 0 for false.
 
 Ternary operators take the form `condition ? true_value : false_value`. They are right-associative so a chained ternary like `a ? b : c ? d :e` is parsed as `a ? b : (c ? d : e)`.
 
@@ -1499,12 +1481,16 @@ _function arguments are `d`oubles (or sub-expressions), `s`trings, or `v`[ariabl
 |----------|------|--------|-------|-------------|
 | armor(`s`/`v`,`s`/`v`)    |  ✅   |   ❌  | u, n  | Return the numerical value for a characters armor on a body part, for a damage type.<br/> Variables are damagetype ID, bodypart ID.<br/> Example:<br/>`"condition": { "math": [ "u_armor('bash', 'torso')", ">=", "5"] }`|  
 | attack_speed()    |  ✅   |   ❌  | u, n  | Return the characters current adjusted attack speed with their current weapon.<br/> Example:<br/>`"condition": { "math": [ "u_attack_speed()", ">=", "10"] }`| 
+| effect_intensity(`s`/`v`,...)    |  ✅   |   ❌  | u, n  | Return the characters intensity of effect.<br/> Variable is effect ID.<br/><br/> Optional kwargs:<br/>`bodypart`: `s`/`v` - Specify the bodypart to get/set intensity of effect.<br/><br/> Example:<br/>`"condition": { "math": [ "u_effect_intensity('bite', 'bodypart': 'torso')", ">", "1"] }`|
+| hp(`s`/`v`)    |  ✅   |   ✅  | u, n  | Return or set the characters hp.<br/> Variable is bodypart ID. If omitted, get sum of all bodypart or set all bodypart.<br/><br/> Example:<br/>`"condition": { "math": [ "hp('torso')", ">", "100"] }`|
+| hp_max(`s`/`v`)    |  ✅   |   ❌  | u, n  | Return the characters max amount of hp on a body part.<br/> Variable is bodypart ID.<br/> Example:<br/>`"condition": { "math": [ "u_hp_max('torso')", ">=", "100"] }`|
 | game_option(`s`/`v`)   |  ✅  |   ❌   | N/A<br/>(global)  | Return the numerical value of a game option<br/> Example:<br/>`"condition": { "math": [ "game_option('NPC_SPAWNTIME')", ">=", "5"] }`|
 | monsters_nearby(`s`/`v`...)     |  ✅  |   ❌   | u, n, global  | Return the number of nearby monsters. Takes any number of `s`tring or `v`ariable positional parameters as monster IDs. <br/><br/>Optional kwargs:<br/>`radius`: `d`/`v` - limit to radius (rl_dist)<br/>`location`: `v` - center search on this location<br/><br/>The `location` kwarg is mandatory in the global scope.<br/><br/>Examples:<br/>`"condition": { "math": [ "u_monsters_nearby('radius': u_search_radius * 3)", ">", "5" ] }`<br/><br/>`"condition": { "math": [ "monsters_nearby('mon_void_maw', 'mon_void_limb', mon_fotm_var, 'radius': u_search_radius * 3, 'location': u_search_loc)", ">", "5" ] }`|
 | num_input(`s`/`v`,`d`/`v`)   |  ✅  |   ❌   | N/A<br/>(global)  | Prompt the player for a number.<br/> Variables are Prompt text, Default Value:<br/>`"math": [ "u_value_to_set", "=", "num_input('Playstyle Perks Cost?', 4)" ]`|
 | pain()     |  ✅  |   ✅   | u, n  | Return or set pain<br/> Example:<br/>`{ "math": [ "n_pain()", "=", "u_pain() + 9000" ] }`|
 | skill(`s`/`v`)    |  ✅  |   ✅   | u, n  | Return or set skill level<br/> Example:<br/>`"condition": { "math": [ "u_skill('driving')", ">=", "5"] }`<br/>`"condition": { "math": [ "u_skill(someskill)", ">=", "5"] }`|
 | spell_exp(`s`/`v`)    |  ✅  |   ✅   | u, n  | Return or set spell xp<br/> Example:<br/>`"condition": { "math": [ "u_spell_exp('SPELL_ID')", ">=", "5"] }`|
+| warmth(`s`/`v`)    |  ✅   |   ❌  | u, n  | Return the characters warmth on a body part.<br/> Variable is bodypart ID.<br/> Example:<br/> The value displayed in-game is calculated as follows.<br/> `"{ "math": [ "u_warmth_in_game", "=", "(u_warmth('torso') / 100) * 2 - 100"] }`|
 | weather(`s`)  |  ✅  |   ✅   | N/A<br/>(global)  | Return or set a weather aspect<br/><br/>Aspect must be one of:<br/>`temperature` (in Kelvin),<br/>`humidity` (as percentage),<br/>`pressure` (in millibar),<br/>`windpower` (in mph).<br/>`precipitation` (in mm / h) either 0.5 (very_light ), 1.5 (light), or 3 (heavy). Read only.<br/><br/>Temperature conversion functions are available: `celsius()`, `fahrenheit()`, `from_celsius()`, and `from_fahrenheit()`.<br/><br/>Examples:<br/>`{ "math": [ "weather('temperature')", "<", "from_fahrenheit( 33 )" ] }`<br/>`{ "math": [ "fahrenheit( weather('temperature') )", "==", "21" ] }`|
 
 ##### u_val shim

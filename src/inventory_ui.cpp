@@ -383,6 +383,7 @@ void uistatedata::serialize( JsonOut &json ) const
     json.member( "distraction_thirst", distraction_thirst );
     json.member( "distraction_temperature", distraction_temperature );
     json.member( "distraction_mutation", distraction_mutation );
+    json.member( "distraction_oxygen", distraction_oxygen );
     json.member( "numpad_navigation", numpad_navigation );
 
     json.member( "input_history" );
@@ -451,6 +452,7 @@ void uistatedata::deserialize( const JsonObject &jo )
     jo.read( "distraction_thirst", distraction_thirst );
     jo.read( "distraction_temperature", distraction_temperature );
     jo.read( "distraction_mutation", distraction_mutation );
+    jo.read( "distraction_oxygen", distraction_oxygen );
     jo.read( "numpad_navigation", numpad_navigation );
 
     if( !jo.read( "vmenu_show_items", vmenu_show_items ) ) {
@@ -657,7 +659,8 @@ bool inventory_selector_preset::sort_compare( const inventory_entry &lhs,
         const inventory_entry &rhs ) const
 {
     auto const sort_key = []( inventory_entry const & e ) {
-        return std::make_tuple( *e.cached_name, *e.cached_name_full, e.generation );
+        return std::make_tuple( *e.cached_name, *e.cached_name_full,
+                                e.any_item()->link_sort_key(), e.generation );
     };
     return localized_compare( sort_key( lhs ), sort_key( rhs ) );
 }
@@ -1272,6 +1275,8 @@ inventory_entry *inventory_column::add_entry( const inventory_entry &entry )
                    entry_item.position() == found_entry_item.position() &&
                    entry_item.parent_item() == found_entry_item.parent_item() &&
                    entry_item->is_collapsed() == found_entry_item->is_collapsed() &&
+                   entry_item->link_length() == found_entry_item->link_length() &&
+                   entry_item->max_link_length() == found_entry_item->max_link_length() &&
                    entry_item->display_stacked_with( *found_entry_item, preset.get_checking_components() );
         } );
         if( entry_with_loc != dest.end() ) {
@@ -1388,8 +1393,8 @@ void inventory_column::collate()
             if( e->is_item() && e->get_category_ptr() == outer->get_category_ptr() &&
                 e->any_item()->is_favorite == outer->any_item()->is_favorite &&
                 e->any_item()->typeId() == outer->any_item()->typeId() &&
-                e->any_item()->contents_linked == outer->any_item()->contents_linked &&
-                !!e->any_item()->link == !!outer->any_item()->link &&
+                std::min( 0, e->any_item()->link_length() ) == std::min( 0, outer->any_item()->link_length() ) &&
+                e->any_item()->max_link_length() == outer->any_item()->max_link_length() &&
                 ( !indent_entries() ||
                   e->any_item().parent_item() == outer->any_item().parent_item() ) &&
                 ( e->is_collation_header() || !e->chevron ) &&
