@@ -405,7 +405,6 @@
     "weapon_override": "GODCO_felicity_wield",
     "traits": [
       { "group": "NPC_starting_traits" },
-      { "trait": "STYLISH" },
       { "trait": "SPIRITUAL" },
       { "group": "Appearance_Mixed" },
       { "trait": "NO_BASH" },
@@ -1077,8 +1076,7 @@
       [ "trappers_companion", 2 ],
       [ "textbook_traps", 8 ],
       [ "beartrap", 25 ],
-      [ "bolt_steel", 15 ],
-      [ "bolt_cf", 10 ],
+      { "group": "crossbow_bolts", "prob": 10 },
       [ "hand_crossbow", 1 ],
       [ "crossbow", 2 ],
       [ "compcrossbow", 3 ],

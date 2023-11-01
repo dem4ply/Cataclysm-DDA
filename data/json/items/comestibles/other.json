@@ -80,20 +80,19 @@
     "fun": 9
   },
   {
-    "type": "COMESTIBLE",
+    "type": "GENERIC",
     "id": "wax",
-    "name": { "str_pl": "waxes", "str": "wax" },
-    "weight": "97 g",
+    "name": { "str": "chunk of beeswax", "str_pl": "chunks of beeswax" },
+    "category": "spare_parts",
+    "weight": "235 g",
     "color": "white",
-    "comestible_type": "FOOD",
+    "material": [ "beeswax" ],
     "symbol": "%",
-    "quench": -4,
-    "calories": 35,
-    "description": "A large chunk of beeswax.  Not very tasty or nourishing, but okay in an emergency.",
-    "price": 1500,
+    "description": "A large chunk of beeswax.  Despite being used in some cooking recipes, beeswax in itself is indigestible to humans.",
+    "price": 1300,
     "price_postapoc": 10,
     "volume": "250 ml",
-    "fun": -5
+    "flags": [ "UNRECOVERABLE" ]
   },
   {
     "type": "COMESTIBLE",
@@ -1139,7 +1138,7 @@
     "type": "COMESTIBLE",
     "comestible_type": "FOOD",
     "name": { "str": "swarm of bees", "str_pl": "swarms of bees" },
-    "description": "A swarm of honey bees, displaced from the hive.  Without support and nutrients, or taking root somewhere, they will die in a few days.",
+    "description": "A swarm of honey bees, displaced from the hive.  Without the support and nutrients of an apiary, or taking root somewhere, they will die in a few days.",
     "//": "While bees have mass and volume, it is easier to round to zero for the purposes of the game.",
     "price": 0,
     "price_postapoc": 0,

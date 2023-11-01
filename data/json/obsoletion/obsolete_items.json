@@ -147,6 +147,25 @@
     "color": "white"
   },
   {
+    "type": "COMESTIBLE",
+    "id": "egg_frog",
+    "name": { "str": "cluster of frog's eggs", "str_pl": "clusters of frog's eggs" },
+    "copy-from": "egg_chicken",
+    "weight": "20 g",
+    "volume": "650 ml",
+    "description": "A large clump of frog eggs.  They're gelatinous and transparent.",
+    "extend": { "flags": [ "OBSOLETE" ] },
+    "rot_spawn": "GROUP_EGG_FROG"
+  },
+  {
+    "type": "COMESTIBLE",
+    "id": "egg_toad",
+    "name": { "str": "cluster of toad's eggs", "str_pl": "clusters of toad's eggs" },
+    "copy-from": "egg_frog",
+    "description": "A large clump of the eggs of a toad.  The eggs themselves are gelatinous and transparent.",
+    "rot_spawn": "GROUP_EGG_TOAD"
+  },
+  {
     "type": "PET_ARMOR",
     "id": "superalloy_harness_dog",
     "copy-from": "kevlar_harness",
@@ -525,6 +544,7 @@
     "color": "green",
     "ammo": [ "battery" ],
     "sub": "hotplate_induction",
+    "flags": [ "ALLOWS_REMOTE_USE" ],
     "charges_per_use": 25,
     "qualities": [ [ "COOK", 2 ], [ "BOIL", 2 ], [ "CONTAIN", 1 ] ],
     "use_action": [ "HOTPLATE", "HEAT_FOOD" ],
@@ -1080,7 +1100,7 @@
     "range": 60,
     "dispersion": 75,
     "recoil": 450,
-    "effects": [ "COOKOFF", "EXPLOSIVE_PG7VL", "TRAIL", "NEVER_MISFIRES" ]
+    "effects": [ "COOKOFF", "TRAIL", "NEVER_MISFIRES" ]
   },
   {
     "type": "AMMO",
@@ -1101,7 +1121,7 @@
     "range": 60,
     "dispersion": 75,
     "recoil": 450,
-    "effects": [ "COOKOFF", "EXPLOSIVE_PG7VR", "TRAIL", "NEVER_MISFIRES" ]
+    "effects": [ "COOKOFF", "TRAIL", "NEVER_MISFIRES" ]
   },
   {
     "type": "AMMO",
@@ -1122,7 +1142,7 @@
     "range": 60,
     "dispersion": 50,
     "recoil": 450,
-    "effects": [ "COOKOFF", "EXPLOSIVE_TBG7V", "TRAIL", "NEVER_MISFIRES", "NAPALM_TBG7V" ]
+    "effects": [ "COOKOFF", "TRAIL", "NEVER_MISFIRES" ]
   },
   {
     "type": "AMMO",
@@ -1143,6 +1163,6 @@
     "range": 60,
     "dispersion": 50,
     "recoil": 350,
-    "effects": [ "COOKOFF", "NEVER_MISFIRES", "EXPLOSIVE_OG7V" ]
+    "effects": [ "COOKOFF", "NEVER_MISFIRES" ]
   }
 ]

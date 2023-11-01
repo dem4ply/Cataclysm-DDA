@@ -409,6 +409,18 @@
   },
   {
     "type": "ammunition_type",
+    "id": "hydrogen",
+    "name": "hydrogen",
+    "default": "hydrogen"
+  },
+  {
+    "type": "ammunition_type",
+    "id": "nitrogen",
+    "name": "nitrogen",
+    "default": "nitrogen"
+  },
+  {
+    "type": "ammunition_type",
     "id": "motor_oil",
     "name": "motor oil",
     "default": "motor_oil"
@@ -622,12 +634,6 @@
     "id": "flintlock",
     "name": "paper cartridge",
     "default": "flintlock_ammo"
-  },
-  {
-    "type": "ammunition_type",
-    "id": "papershot",
-    "name": "20ga percussion",
-    "default": "nail"
   },
   {
     "type": "ammunition_type",

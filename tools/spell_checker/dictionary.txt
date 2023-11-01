@@ -10,6 +10,7 @@ accessorizing
 acclimatization
 accoustrement
 accuracies
+accurized
 achelousaurus
 acho
 acidball
@@ -27,15 +28,19 @@ aeroctinus
 aerofoil
 aeterna
 aetheric
+aetherically
 affordability
 affordably
 afterbirth
+aftereffect
+aftereffects
 afterglow
 afterimage
 afterlife
 aftermarket
 aftermath
 afternoon
+afternoons
 aftertaste
 afterthought
 afterward
@@ -77,6 +82,7 @@ allosaurid
 allosaurus
 allosaurusid
 allotrope
+alloying
 allucination
 alnico
 alquerque
@@ -163,6 +169,7 @@ arthropod
 arthropodology
 artificer
 artisanals
+arvore
 asexuality
 askin
 aspirants
@@ -630,6 +637,7 @@ coverplate
 crablike
 cracklins
 craftable
+crafter
 craftsfolk
 craftswoman
 craftwork
@@ -655,6 +663,7 @@ cryopod
 cryopreservation
 cryosleep
 crystaltender
+cthonic
 ctivate
 ctulaly
 cudgels
@@ -730,6 +739,7 @@ deliriant
 delsihous
 demagnetized
 demihuman
+demining
 demisexuality
 demoed
 denarius
@@ -812,6 +822,7 @@ doffing
 dogbane
 doggo
 doglike
+dollkin
 domestica
 dongle
 doomseer
@@ -837,6 +848,8 @@ dreamdrossed
 dreamforged
 dreamsmith
 dreamstuff
+dress
+dresses
 driers
 drivetrain
 dromaeosaurid
@@ -870,6 +883,7 @@ earmuff
 earsplitting
 earthbag
 earthbags
+earthkin
 earthlike
 earthshaper
 earthside
@@ -964,6 +978,7 @@ everfrost
 eviscerations
 exactingly
 exchangeable
+exchanger
 excreta
 excretions
 exhorts
@@ -1066,6 +1081,7 @@ flagration
 flairs
 flamberge
 flamesword
+flametouched
 flammenschwert
 flanged
 flappin
@@ -1229,6 +1245,7 @@ goops
 gores
 gorget
 gorgosaurus
+gouts
 goverments
 gowod
 gozu
@@ -1318,6 +1335,7 @@ hdd
 headbutts
 headin
 headwear
+headwrap
 healthiness
 heartiness
 heartlike
@@ -1365,6 +1383,7 @@ homebrewing
 homemaking
 homewrecker
 homovorus
+homullus
 homunculi
 homunculus
 honeygold
@@ -1421,6 +1440,7 @@ ibalalehu
 ichor
 ichthys
 idkont
+ierde
 ifoundramsesthecat
 ignitable
 ignto
@@ -1482,6 +1502,8 @@ intermixed
 interwar
 intimidatingly
 intolerances
+intone
+intones
 intoxications
 intoxicative
 inulin
@@ -1894,6 +1916,7 @@ motes
 motorpool
 motorsports
 mountable
+mountings
 mouthgear
 mouthpart
 mouthparts
@@ -1999,6 +2022,7 @@ nigromancie
 nimbelemnite
 nimbleness
 nimbler
+nimue
 niter
 nitrox
 nittlebam
@@ -2085,6 +2109,7 @@ outgrowths
 outperforms
 outputting
 ovata
+overboots
 overbore
 overbuilt
 overclock
@@ -2093,13 +2118,18 @@ overdosage
 overdrinking
 overengineered
 overexertion
+overgloves
 overgrowth
+overhood
+overhoods
 overmap
 overmaps
 overpenetration
 overpressure
 overqueen
 overshoes
+oversuit
+oversuits
 overswing
 overswinging
 overtaxing
@@ -2140,12 +2170,15 @@ parst
 parthenogenetic
 partyin
 passionfruit
+pastes
 pasteurize
 pathfinding
 patios
 pauldrons
 peacoat
 peanutbutter
+pearlescent
+pebbled
 peccari
 peccary
 pecial
@@ -2221,6 +2254,7 @@ placidly
 planar
 planer
 planetside
+plantkin
 plantlike
 plastron
 platemail
@@ -2272,6 +2306,7 @@ posteriori
 posthuman
 potboiler
 potentiates
+poultices
 pouncer
 powerlifting
 powerplants
@@ -2403,6 +2438,7 @@ rangehands
 raptorial
 rashguard
 rashy
+ratatosk
 ratlike
 rattigan
 rayed
@@ -2436,6 +2472,7 @@ reckonin
 reclines
 recolherem
 recrafted
+recuperator
 recursively
 recurve
 recutita
@@ -2534,6 +2571,7 @@ rrrip
 rrrrip
 rubra
 rugerlcp
+ruggedized
 ruleset
 ruminant
 ruminants
@@ -2580,6 +2618,7 @@ sawblade
 sawblades
 sawteeth
 sayig
+scabbards
 scalable
 scatterer
 schippe
@@ -2637,6 +2676,7 @@ shantak
 shantytowns
 shapechangers
 sharksuit
+sharksuits
 shedded
 shenandoah
 shipside
@@ -2670,6 +2710,7 @@ silage
 siloed
 siloing
 sinensis
+sinously
 sintering
 sithen
 sixdust
@@ -2683,6 +2724,7 @@ skulduggery
 skulker
 skullgun
 skybridge
+skyglass
 slackness
 slaked
 slamfire
@@ -2829,6 +2871,8 @@ stompers
 stompy
 stompy-clanker
 stonelike
+stoneling
+stonelings
 stoneskin
 stook
 stooking
@@ -2904,6 +2948,7 @@ swipin
 switchgear
 swordmanship
 syde
+sylph
 sylvatica
 sylvite
 sym
@@ -2959,7 +3004,7 @@ teshuvah
 testbed
 tetradrachm
 tetrahedron
-th
+thaumaturge
 thaumaturgical
 thawb
 themm
@@ -3106,6 +3151,7 @@ underbody
 undercovering
 underfongen
 undergrown
+underhill
 underlayer
 underlayers
 undersides
@@ -3113,6 +3159,7 @@ underslung
 understandingly
 underwelming
 undescribed
+undine
 undried
 undulates
 uneasing
@@ -3209,6 +3256,7 @@ vars
 vatgrown
 vaulters
 veggy
+vegital
 veined
 venandi
 ventrolateral
@@ -3228,9 +3276,12 @@ viewport
 viewports
 vikeys
 vinegared
+vineling
+vinelings
 viny
 viperine
 virginica
+viridian
 virions
 vises
 vitakinesis
@@ -3268,6 +3319,7 @@ wasnt
 wastebread
 watchband
 waterfowl
+waterkin
 waterproofed
 waterskin
 waterskins
@@ -3312,6 +3364,8 @@ wielders
 wieldier
 willin
 willowbark
+wimple
+wimples
 windowframe
 windproof
 winglike
@@ -3400,6 +3454,7 @@ zombified
 zomborg
 zombull
 zombullfrog
+zoomorphic
 zoonotic
 zpzzzzpzz
 zubon

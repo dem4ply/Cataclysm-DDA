@@ -123,6 +123,32 @@
     "ammo_type": "oxygen"
   },
   {
+    "type": "AMMO",
+    "id": "hydrogen",
+    "name": { "str_sp": "hydrogen" },
+    "symbol": "~",
+    "color": "white",
+    "description": "Compressed hydrogen.",
+    "weight": "1 mg",
+    "volume": "1 ml",
+    "flags": [ "TRADER_AVOID", "NO_DROP" ],
+    "phase": "gas",
+    "ammo_type": "hydrogen"
+  },
+  {
+    "type": "AMMO",
+    "id": "nitrogen",
+    "name": { "str_sp": "nitrogen" },
+    "symbol": "~",
+    "color": "white",
+    "description": "Compressed nitrogen.",
+    "weight": "1 mg",
+    "volume": "1 ml",
+    "flags": [ "TRADER_AVOID", "NO_DROP" ],
+    "phase": "gas",
+    "ammo_type": "nitrogen"
+  },
+  {
     "type": "TOOL",
     "id": "betavoltaic",
     "category": "spare_parts",
@@ -701,7 +727,7 @@
     "id": "plasma",
     "price": 80000,
     "price_postapoc": 1000,
-    "name": { "str": "hydrogen canister" },
+    "name": { "str": "solid hydrogen canister" },
     "symbol": "=",
     "color": "light_gray",
     "description": "A canister of pressurized hydrogen so heavily compressed it has turned solid.  With proper equipment, it could be heated into plasma.",
@@ -976,18 +1002,6 @@
   },
   {
     "type": "AMMO",
-    "id": "generic_no_ammo",
-    "price": 0,
-    "name": { "str": "placeholder ammunition" },
-    "symbol": "=",
-    "color": "red",
-    "description": "IF YOU ARE SEEING THIS IT IS A BUG.",
-    "volume": "0 ml",
-    "ammo_type": "NULL",
-    "flags": [ "UNRECOVERABLE", "ZERO_WEIGHT" ]
-  },
-  {
-    "type": "AMMO",
     "id": "charcoal",
     "category": "spare_parts",
     "//0": "about a dollar per kg of charcoal commercially. fetches $0.001 per chunk to survivors",
@@ -1146,7 +1160,7 @@
   {
     "type": "AMMO",
     "id": "gasfilter_s",
-    "category": "spare_parts",
+    "category": "tool_magazine",
     "price": 2500,
     "price_postapoc": 500,
     "name": { "str": "filter mask cartridge" },
@@ -1161,7 +1175,7 @@
   {
     "type": "AMMO",
     "id": "gasfilter_m",
-    "category": "spare_parts",
+    "category": "tool_magazine",
     "price": 2500,
     "price_postapoc": 750,
     "name": { "str": "gas mask cartridge" },
@@ -1240,7 +1254,7 @@
     "range": 23,
     "dispersion": 170,
     "recoil": 130,
-    "effects": [ "COOKOFF", "TRAIL", "EXPLOSIVE" ]
+    "effects": [ "SPECIAL_COOKOFF", "TRAIL", "EXPLOSIVE" ]
   },
   {
     "type": "AMMO",
@@ -1259,7 +1273,7 @@
     "range": 13,
     "dispersion": 200,
     "recoil": 130,
-    "effects": [ "COOKOFF", "TRAIL", "NAPALM" ]
+    "effects": [ "SPECIAL_COOKOFF", "TRAIL", "NAPALM" ]
   },
   {
     "type": "AMMO",

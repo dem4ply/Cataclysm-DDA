@@ -294,6 +294,7 @@ void worldfactory::set_active_world( WORLD *world )
 bool WORLD::save( const bool is_conversion ) const
 {
     if( !assure_dir_exist( folder_path() ) ) {
+        debugmsg( "Unable to create or open world[%s] directory for saving", world_name );
         DebugLog( D_ERROR, DC_ALL ) << "Unable to create or open world[" << world_name <<
                                     "] directory for saving";
         return false;
@@ -1364,7 +1365,6 @@ int worldfactory::show_worldgen_tab_modselection( const catacurses::window &win,
                 }
             }
         }
-
 
         if( navigate_ui_list( action, cursel[active_header], scroll_rate, recmax, true ) ) {
             recalc_start = true;
